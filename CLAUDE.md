@@ -79,15 +79,39 @@ never guessed.
 
 ## Milestones
 
-- **M1 — Data pipeline** (in progress): fetch Melbourne from OSM + Wikipedia into
-  SQLite with full-text search; prove with "halal restaurants" and "temples".
-- **M2 — App skeleton + templated answers**: Compose chat UI + preferences,
-  loads the M1 database, returns real recommendations via templates. The MVP
-  success test passes here, offline, before the LLM.
-- **M3 — On-device AI**: LiteRT-LM + Gemma 4 over the same retrieval, with
+- **M1 — Data pipeline** ✅ Done: Melbourne fetched from OSM + Wikipedia into
+  SQLite (`pipeline/`) — 20,092 places + full-text search; proven with
+  "halal restaurants", "temples", "vegetarian near me".
+- **M2 — App skeleton + templated answers** (next): Compose chat UI +
+  preferences, loads the M1 database, returns real recommendations via
+  templates + a one-shot "near me" location. The MVP success test passes here,
+  offline, before the LLM.
+- **M3 — Travel Journal** (approved): private "My Trips" — save visited places,
+  notes, bucket list (todo/done), visit dates, photos (copied to app-private
+  storage), anniversary reminders, and an on-open "you're back nearby" nudge.
+  See "Travel Journal design" below.
+- **M4 — On-device AI**: LiteRT-LM + Gemma 4 over the same retrieval, with
   grounding guardrails + the trick-test suite.
-- **M4 — Location + voice**: GPS "near me" + Vosk offline voice.
-- **M5 — Any city**: "Download data for [city]?" flow + silent background refresh.
+- **M5 — Location + voice**: GPS "near me" search + Vosk offline voice.
+- **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.
+
+## Travel Journal design (M3)
+
+Personal, private, offline. Stored in a SEPARATE database from the city data
+packs so refreshing/replacing a city can NEVER delete the user's memories; each
+saved place snapshots its own name + coordinates so it is self-contained.
+
+Journal tables: `saved_place` (name, lat/lng snapshot, free-text notes),
+`visit_date` (one per visit → one anniversary each), `bucket_item`
+(text + status todo/done — "what's left" = the todo items), `photo`
+(copied into app-private storage, optional caption). Everything is editable
+and deletable with a confirm on delete.
+
+Android mechanisms: photos via the no-permission Android Photo Picker copied
+into `filesDir`; anniversary reminders via WorkManager + POST_NOTIFICATIONS;
+the "you're back" nudge is a one-shot GPS check on app open (foreground location
+only) comparing saved places within ~300 m — NO background location. Journal
+CRUD uses Room; the read-only city pack is opened directly.
 
 ## Git & commit rules
 

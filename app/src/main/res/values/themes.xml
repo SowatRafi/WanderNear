@@ -1,0 +1,5 @@
+<resources>
+    <!-- A minimal base theme with no title bar. Compose (Material 3) does the
+         real theming; this just styles the window before Compose draws. -->
+    <style name="Theme.WanderNear" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
