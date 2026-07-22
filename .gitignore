@@ -1,0 +1,21 @@
+# --- Python (data pipeline) ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated data packs — regenerate anytime with the pipeline scripts.
+pipeline/out/
+
+# --- Android (added in Milestone 2) ---
+*.iml
+.gradle/
+/local.properties
+/build/
+app/build/
+.idea/
+*.keystore
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
