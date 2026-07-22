@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.UserPreferences
+import com.wandernear.core.response.GroundingCheck
 import com.wandernear.core.response.Recommender
 import com.wandernear.core.retrieval.QueryParser
 import com.wandernear.data.CityDatabase
@@ -136,8 +137,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                         } else {
                             null
                         }
-                        // Fall back to the template if the model isn't ready or returns nothing.
-                        aiText?.takeIf { it.isNotBlank() } ?: Recommender.reply(spec, places, nearYou = here != null)
+                        // Use the AI reply only if it isn't empty AND names only
+                        // places we actually retrieved; otherwise fall back to the
+                        // template. This is the enforced never-hallucinate guardrail.
+                        aiText?.takeIf { it.isNotBlank() && GroundingCheck.isGrounded(it, places) }
+                            ?: Recommender.reply(spec, places, nearYou = here != null)
                     } else {
                         Recommender.reply(spec, places, nearYou = here != null)
                     }

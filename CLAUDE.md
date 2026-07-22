@@ -100,10 +100,12 @@ never guessed.
   2.3 metadata. M4.2 done: AI-reworded replies in the chat — grounded CONTEXT
   built from the retrieved rows, warm Gemma 4 prose with the fact cards preserved
   beneath, a "warming up" state for the slow first load, and a template fallback
-  if the model isn't ready or returns nothing. Remaining: M4.3 stricter output
-  validation (reject any place the model names that wasn't retrieved), M4.4
-  adversarial trick-tests): LiteRT-LM + Gemma 4 over the same retrieval, with
-  grounding guardrails + the trick-test suite.
+  if the model isn't ready or returns nothing. M4.3 done: `GroundingCheck`
+  (core) scans the AI reply for capitalized venue/proper-noun phrases and rejects
+  any that match no retrieved place → falls back to the template, so an invented
+  place is never shown; covered by JVM unit tests (`GroundingCheckTest`, JUnit).
+  Remaining: M4.4 adversarial trick-tests): LiteRT-LM + Gemma 4 over the same
+  retrieval, with grounding guardrails + the trick-test suite.
 - **M5 — Location + voice**: GPS "near me" search + Vosk offline voice.
 - **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.
 
