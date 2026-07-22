@@ -57,6 +57,19 @@ interface JournalDao {
 
     @Delete
     suspend fun delete(visit: VisitDate)
+
+    // --- Photos ---
+    @Query("SELECT * FROM photo WHERE savedPlaceId = :placeId ORDER BY createdAt")
+    fun photos(placeId: Long): Flow<List<Photo>>
+
+    @Insert
+    suspend fun insert(photo: Photo): Long
+
+    @Update
+    suspend fun update(photo: Photo)
+
+    @Delete
+    suspend fun delete(photo: Photo)
 }
 
 /** The traveller's private journal database (separate from the city pack). */

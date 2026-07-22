@@ -2,21 +2,30 @@ package com.wandernear.ui
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -29,6 +38,7 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -41,24 +51,33 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import coil.compose.AsyncImage
 import com.wandernear.data.journal.BucketItem
 import com.wandernear.data.journal.JournalDao
 import com.wandernear.data.journal.JournalDatabase
+import com.wandernear.data.journal.Photo
+import com.wandernear.data.journal.PhotoStorage
 import com.wandernear.data.journal.SavedPlace
 import com.wandernear.data.journal.VisitDate
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
  * The "My Trips" tab. Shows the list of saved places; tapping one opens its
- * detail (notes, visits, bucket list, delete). We switch between list and
- * detail with a simple state flag instead of pulling in a navigation library.
+ * detail (notes, visits, bucket list, photos, delete). We switch between list
+ * and detail with a simple state flag instead of a navigation library.
  */
 @Composable
 fun MyTripsScreen() {
@@ -127,6 +146,7 @@ private fun TripDetail(dao: JournalDao, placeId: Long, onBack: () -> Unit) {
     val place by dao.savedPlace(placeId).collectAsState(initial = null)
     val visits by dao.visits(placeId).collectAsState(initial = emptyList())
     val bucket by dao.bucketItems(placeId).collectAsState(initial = emptyList())
+    val photos by dao.photos(placeId).collectAsState(initial = emptyList())
 
     val loaded = place
     if (loaded == null) {
@@ -214,6 +234,10 @@ private fun TripDetail(dao: JournalDao, placeId: Long, onBack: () -> Unit) {
             }
         }
 
+        // --- Photos ---
+        SectionTitle("Photos")
+        PhotosSection(dao, placeId, photos)
+
         // --- Delete the whole saved place ---
         Spacer(Modifier.height(24.dp))
         TextButton(
@@ -226,11 +250,16 @@ private fun TripDetail(dao: JournalDao, placeId: Long, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete this place?") },
-            text = { Text("It and all its notes, visits, and bucket items will be removed. This can't be undone.") },
+            text = { Text("It and all its notes, visits, bucket items, and photos will be removed. This can't be undone.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
-                    scope.launch { dao.delete(loaded); onBack() }
+                    scope.launch {
+                        // Delete the photo files too, so nothing is left orphaned.
+                        photos.forEach { PhotoStorage.delete(it.filePath) }
+                        dao.delete(loaded)
+                        onBack()
+                    }
                 }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
@@ -256,6 +285,120 @@ private fun TripDetail(dao: JournalDao, placeId: Long, onBack: () -> Unit) {
         ) {
             DatePicker(state = pickerState)
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PhotosSection(dao: JournalDao, placeId: Long, photos: List<Photo>) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var viewing by remember { mutableStateOf<Photo?>(null) }
+
+    // The Android Photo Picker needs no permission and returns one photo Uri.
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val path = withContext(Dispatchers.IO) { PhotoStorage.save(context, uri) }
+                if (path != null) {
+                    dao.insert(Photo(savedPlaceId = placeId, filePath = path, createdAt = System.currentTimeMillis()))
+                } else {
+                    Toast.makeText(context, "Couldn't add that photo", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        photos.forEach { photo ->
+            AsyncImage(
+                model = File(photo.filePath),
+                contentDescription = photo.caption ?: "Saved photo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(96.dp).clip(RoundedCornerShape(12.dp)).clickable { viewing = photo },
+            )
+        }
+        // The "+ Add" tile launches the photo picker.
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                .clickable {
+                    picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("+ Add", style = MaterialTheme.typography.labelMedium)
+        }
+    }
+
+    viewing?.let { photo ->
+        PhotoViewer(dao = dao, photo = photo, onClose = { viewing = null })
+    }
+}
+
+@Composable
+private fun PhotoViewer(dao: JournalDao, photo: Photo, onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var caption by remember(photo.id) { mutableStateOf(photo.caption ?: "") }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onClose) {
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.padding(16.dp)) {
+                AsyncImage(
+                    model = File(photo.filePath),
+                    contentDescription = photo.caption ?: "Saved photo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = caption,
+                    onValueChange = { caption = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Add a caption…") },
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(
+                        onClick = { confirmDelete = true },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    ) { Text("Delete") }
+                    Row {
+                        TextButton(onClick = onClose) { Text("Close") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            scope.launch { dao.update(photo.copy(caption = caption.ifBlank { null })) }
+                            onClose()
+                        }) { Text("Save") }
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this photo?") },
+            text = { Text("It will be removed from this place. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    val path = photo.filePath
+                    scope.launch { dao.delete(photo) }
+                    PhotoStorage.delete(path)
+                    onClose()
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
     }
 }
 

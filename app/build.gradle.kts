@@ -45,4 +45,6 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     kapt(libs.androidx.room.compiler)
+    // Coil — loads the traveller's local photos into Compose (thumbnails + viewer).
+    implementation(libs.coil.compose)
 }
