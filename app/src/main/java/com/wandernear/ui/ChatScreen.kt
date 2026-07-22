@@ -61,6 +61,10 @@ import com.wandernear.data.LocationProvider
 import com.wandernear.data.PreferencesRepository
 import com.wandernear.data.journal.JournalDatabase
 import com.wandernear.data.journal.SavedPlace
+import com.wandernear.ai.LlmEngine
+import com.wandernear.ai.ModelManager
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.size
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,7 +78,12 @@ private val EXAMPLES = listOf("Vegetarian food", "Temples", "Halal food", "Parks
 
 private enum class Role { User, Assistant }
 private data class RecCard(val place: Place, val reason: String)
-private data class ChatMessage(val role: Role, val text: String, val cards: List<RecCard> = emptyList())
+private data class ChatMessage(
+    val role: Role,
+    val text: String,
+    val cards: List<RecCard> = emptyList(),
+    val loading: Boolean = false,
+)
 
 /** The main tab: ask for a place, get real recommendations built from the data. */
 @Composable
@@ -93,19 +102,49 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // Runs the actual search: uses the real location if we have one, else the
     // city centre. Both parse + search happen off the main thread.
     fun runSearch(question: String) {
+        val aiEnabled = prefs.useAi && ModelManager.isDownloaded(context)
+        // For the AI path (which can be slow, especially the first model load),
+        // show a temporary loading bubble and replace it when the reply is ready.
+        val placeholderIndex = if (aiEnabled) {
+            val warming = !LlmEngine.isLoaded()
+            messages += ChatMessage(
+                Role.Assistant,
+                if (warming) "Warming up the on-device AI (first time, about a minute)…" else "Thinking…",
+                loading = true,
+            )
+            messages.lastIndex
+        } else {
+            null
+        }
+
         scope.launch {
             val answer = withContext(Dispatchers.IO) {
                 val here = LocationProvider.lastKnown(context)   // null ⇒ no permission/fix
                 val origin = here ?: MELBOURNE_CBD
                 val spec = QueryParser.parse(question, prefs)
                 val places = db.search(spec, origin)
-                ChatMessage(
-                    role = Role.Assistant,
-                    text = Recommender.reply(spec, places, nearYou = here != null),
-                    cards = places.map { RecCard(it, Recommender.reason(it, spec)) },
-                )
+
+                if (places.isEmpty()) {
+                    // Nothing retrieved → honest refusal; the AI is never called.
+                    ChatMessage(Role.Assistant, Recommender.NO_RESULTS)
+                } else {
+                    val cards = places.map { RecCard(it, Recommender.reason(it, spec)) }
+                    val intro = if (aiEnabled) {
+                        val ready = LlmEngine.ensureReady(context)
+                        val aiText = if (ready) {
+                            LlmEngine.generate(Recommender.AI_SYSTEM, Recommender.aiPrompt(question, places, here != null))
+                        } else {
+                            null
+                        }
+                        // Fall back to the template if the model isn't ready or returns nothing.
+                        aiText?.takeIf { it.isNotBlank() } ?: Recommender.reply(spec, places, nearYou = here != null)
+                    } else {
+                        Recommender.reply(spec, places, nearYou = here != null)
+                    }
+                    ChatMessage(Role.Assistant, intro, cards)
+                }
             }
-            messages += answer
+            if (placeholderIndex != null) messages[placeholderIndex] = answer else messages += answer
         }
     }
 
@@ -224,7 +263,18 @@ private fun MessageItem(message: ChatMessage, onDirections: (Place) -> Unit, onS
             contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
             shape = RoundedCornerShape(16.dp),
         ) {
-            Text(message.text, modifier = Modifier.padding(12.dp))
+            if (message.loading) {
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(message.text)
+                }
+            } else {
+                Text(message.text, modifier = Modifier.padding(12.dp))
+            }
         }
         message.cards.forEach { card ->
             Spacer(Modifier.height(8.dp))

@@ -97,9 +97,13 @@ never guessed.
   + Preferences toggle + "Test AI" verified a real reworded reply on a Pixel 6.
   Required a toolchain upgrade — Kotlin 2.3.21, KSP 2.3.10, Room 2.8.4, AGP
   8.10.1, Compose BOM 2026.06.01, **minSdk 31** — because LiteRT-LM ships Kotlin
-  2.3 metadata. Remaining: M4.2 grounded rewording in chat, M4.3 output
-  validation + template fallback, M4.4 adversarial trick-tests): LiteRT-LM +
-  Gemma 4 over the same retrieval, with grounding guardrails + the trick-test suite.
+  2.3 metadata. M4.2 done: AI-reworded replies in the chat — grounded CONTEXT
+  built from the retrieved rows, warm Gemma 4 prose with the fact cards preserved
+  beneath, a "warming up" state for the slow first load, and a template fallback
+  if the model isn't ready or returns nothing. Remaining: M4.3 stricter output
+  validation (reject any place the model names that wasn't retrieved), M4.4
+  adversarial trick-tests): LiteRT-LM + Gemma 4 over the same retrieval, with
+  grounding guardrails + the trick-test suite.
 - **M5 — Location + voice**: GPS "near me" search + Vosk offline voice.
 - **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.
 
