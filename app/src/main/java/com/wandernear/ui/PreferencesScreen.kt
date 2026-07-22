@@ -76,6 +76,9 @@ fun PreferencesScreen(repo: PreferencesRepository) {
             // Single choice: tapping the selected one again clears it.
             scope.launch { repo.setTravelStyle(if (prefs.travelStyle == key) null else key) }
         }
+
+        Spacer(Modifier.height(24.dp))
+        AiSettingsSection(repo)
     }
 }
 

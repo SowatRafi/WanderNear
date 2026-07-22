@@ -92,8 +92,14 @@ never guessed.
   notes, bucket list (todo/done), visit dates, photos (copied to app-private
   storage), anniversary reminders, and an on-open "you're back nearby" nudge.
   See "Travel Journal design" below.
-- **M4 — On-device AI** (next): LiteRT-LM + Gemma 4 over the same retrieval, with
-  grounding guardrails + the trick-test suite.
+- **M4 — On-device AI** (in progress — M4.1 done: LiteRT-LM 0.14.0 + Gemma 4 E2B
+  (2.6 GB, Apache-2.0, ungated) running on-device on CPU; model download manager
+  + Preferences toggle + "Test AI" verified a real reworded reply on a Pixel 6.
+  Required a toolchain upgrade — Kotlin 2.3.21, KSP 2.3.10, Room 2.8.4, AGP
+  8.10.1, Compose BOM 2026.06.01, **minSdk 31** — because LiteRT-LM ships Kotlin
+  2.3 metadata. Remaining: M4.2 grounded rewording in chat, M4.3 output
+  validation + template fallback, M4.4 adversarial trick-tests): LiteRT-LM +
+  Gemma 4 over the same retrieval, with grounding guardrails + the trick-test suite.
 - **M5 — Location + voice**: GPS "near me" search + Vosk offline voice.
 - **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.
 

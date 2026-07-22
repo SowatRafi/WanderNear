@@ -11,4 +11,5 @@ data class UserPreferences(
     val diets: Set<String> = emptySet(),      // e.g. "halal", "vegetarian", "vegan"
     val interests: Set<String> = emptySet(),  // e.g. "food", "worship", "attraction", "outdoor"
     val travelStyle: String? = null,          // e.g. "foodie", "culture", "outdoors", "hidden"
+    val useAi: Boolean = false,               // reword replies with the on-device AI model
 )
