@@ -82,11 +82,12 @@ never guessed.
 - **M1 — Data pipeline** ✅ Done: Melbourne fetched from OSM + Wikipedia into
   SQLite (`pipeline/`) — 20,092 places + full-text search; proven with
   "halal restaurants", "temples", "vegetarian near me".
-- **M2 — App skeleton + templated answers** (next): Compose chat UI +
-  preferences, loads the M1 database, returns real recommendations via
-  templates + a one-shot "near me" location. The MVP success test passes here,
-  offline, before the LLM.
-- **M3 — Travel Journal** (approved): private "My Trips" — save visited places,
+- **M2 — App skeleton + templated answers** ✅ Done: Compose chat + preferences,
+  loads the M1 database, returns real grounded recommendations via templates,
+  one-shot GPS "near me" (falls back to the city centre), Directions +
+  attribution, and an honest refusal on no match. MVP success test passes
+  offline, before the LLM. Package `com.wandernear`; `core/` is Android-free.
+- **M3 — Travel Journal** (next): private "My Trips" — save visited places,
   notes, bucket list (todo/done), visit dates, photos (copied to app-private
   storage), anniversary reminders, and an on-open "you're back nearby" nudge.
   See "Travel Journal design" below.

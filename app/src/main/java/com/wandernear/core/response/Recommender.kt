@@ -16,9 +16,10 @@ object Recommender {
             "Try different words — or I can refresh this city's data in a later version."
 
     /** The one-line intro shown above the recommendation cards. */
-    fun reply(spec: SearchSpec, places: List<Place>): String {
+    fun reply(spec: SearchSpec, places: List<Place>, nearYou: Boolean): String {
         if (places.isEmpty()) return NO_RESULTS
-        return "Here are a few ${describe(spec)} near the city centre:"
+        val where = if (nearYou) "near you" else "near the city centre"
+        return "Here are a few ${describe(spec)} $where:"
     }
 
     /** A short "why" line for one place, built only from real fields. */

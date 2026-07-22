@@ -1,10 +1,13 @@
 package com.wandernear.ui
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -32,6 +35,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,21 +51,20 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.LaunchedEffect
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.UserPreferences
 import com.wandernear.core.response.Recommender
 import com.wandernear.core.retrieval.QueryParser
 import com.wandernear.data.CityDatabase
+import com.wandernear.data.LocationProvider
 import com.wandernear.data.PreferencesRepository
-import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// Roughly the centre of Melbourne's CBD. Stands in for "near me" until real GPS
-// arrives in Milestone 5.
+// Fallback origin: roughly the centre of Melbourne's CBD, used when we don't
+// have the user's real location (permission declined, or no GPS fix yet).
 private val MELBOURNE_CBD = LatLng(-37.8136, 144.9631)
 
 // Example prompts shown on the empty screen to help the user get started.
@@ -78,26 +82,49 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val db = remember { CityDatabase(context) }
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var input by remember { mutableStateOf("") }
+    var askedLocation by remember { mutableStateOf(false) }
+    var pendingQuestion by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+
+    // Runs the actual search: uses the real location if we have one, else the
+    // city centre. Both parse + search happen off the main thread.
+    fun runSearch(question: String) {
+        scope.launch {
+            val answer = withContext(Dispatchers.IO) {
+                val here = LocationProvider.lastKnown(context)   // null ⇒ no permission/fix
+                val origin = here ?: MELBOURNE_CBD
+                val spec = QueryParser.parse(question, prefs)
+                val places = db.search(spec, origin)
+                ChatMessage(
+                    role = Role.Assistant,
+                    text = Recommender.reply(spec, places, nearYou = here != null),
+                    cards = places.map { RecCard(it, Recommender.reason(it, spec)) },
+                )
+            }
+            messages += answer
+        }
+    }
+
+    // Asks for location once; whatever the user chooses, we run the pending search.
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { _ ->
+        pendingQuestion?.let { runSearch(it); pendingQuestion = null }
+    }
 
     fun ask(text: String) {
         val question = text.trim()
         if (question.isEmpty()) return
         messages += ChatMessage(Role.User, question)
         input = ""
-        scope.launch {
-            // Parse + search off the main thread so the UI never freezes.
-            val answer = withContext(Dispatchers.IO) {
-                val spec = QueryParser.parse(question, prefs)
-                val places = db.search(spec, MELBOURNE_CBD)
-                ChatMessage(
-                    role = Role.Assistant,
-                    text = Recommender.reply(spec, places),
-                    cards = places.map { RecCard(it, Recommender.reason(it, spec)) },
-                )
-            }
-            messages += answer
+        // On the very first search, request location once so "near me" is real.
+        if (!askedLocation && !LocationProvider.hasPermission(context)) {
+            askedLocation = true
+            pendingQuestion = question
+            locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        } else {
+            runSearch(question)
         }
     }
 
