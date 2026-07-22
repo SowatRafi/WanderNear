@@ -19,11 +19,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.wandernear.data.PreferencesRepository
 import com.wandernear.ui.ChatScreen
+import com.wandernear.ui.MyTripsScreen
 import com.wandernear.ui.PreferencesScreen
 
 /** The two tabs in the bottom navigation bar. */
 private enum class Tab(val label: String, val icon: String) {
     Explore("Ask", "💬"),
+    MyTrips("My Trips", "📍"),
     Preferences("Preferences", "⚙️"),
 }
 
@@ -60,6 +62,7 @@ private fun AppScaffold(prefsRepo: PreferencesRepository) {
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when (tab) {
                 Tab.Explore -> ChatScreen(prefsRepo)
+                Tab.MyTrips -> MyTripsScreen()
                 Tab.Preferences -> PreferencesScreen(prefsRepo)
             }
         }

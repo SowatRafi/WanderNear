@@ -59,6 +59,8 @@ import com.wandernear.core.retrieval.QueryParser
 import com.wandernear.data.CityDatabase
 import com.wandernear.data.LocationProvider
 import com.wandernear.data.PreferencesRepository
+import com.wandernear.data.journal.JournalDatabase
+import com.wandernear.data.journal.SavedPlace
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -80,6 +82,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val context = LocalContext.current
     val prefs by prefsRepo.preferences.collectAsState(initial = UserPreferences())
     val db = remember { CityDatabase(context) }
+    val journalDao = remember { JournalDatabase.get(context).journalDao() }
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var input by remember { mutableStateOf("") }
     var askedLocation by remember { mutableStateOf(false) }
@@ -128,6 +131,25 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         }
     }
 
+    // Saves a recommended place into the journal as a self-contained snapshot.
+    fun saveToTrips(place: Place) {
+        val now = System.currentTimeMillis()
+        scope.launch {
+            journalDao.insert(
+                SavedPlace(
+                    name = place.name,
+                    lat = place.lat,
+                    lng = place.lng,
+                    category = place.category,
+                    subcategory = place.subcategory,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+            Toast.makeText(context, "Saved to My Trips", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Keep the newest message in view.
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
@@ -144,7 +166,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(messages) { message ->
-                    MessageItem(message, onDirections = { openDirections(context, it) })
+                    MessageItem(
+                        message,
+                        onDirections = { openDirections(context, it) },
+                        onSave = { saveToTrips(it) },
+                    )
                 }
             }
         }
@@ -187,7 +213,7 @@ private fun EmptyState(onExample: (String) -> Unit, modifier: Modifier) {
 }
 
 @Composable
-private fun MessageItem(message: ChatMessage, onDirections: (Place) -> Unit) {
+private fun MessageItem(message: ChatMessage, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
     val isUser = message.role == Role.User
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -202,13 +228,13 @@ private fun MessageItem(message: ChatMessage, onDirections: (Place) -> Unit) {
         }
         message.cards.forEach { card ->
             Spacer(Modifier.height(8.dp))
-            RecommendationCard(card, onDirections)
+            RecommendationCard(card, onDirections, onSave)
         }
     }
 }
 
 @Composable
-private fun RecommendationCard(card: RecCard, onDirections: (Place) -> Unit) {
+private fun RecommendationCard(card: RecCard, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
     val place = card.place
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -235,7 +261,11 @@ private fun RecommendationCard(card: RecCard, onDirections: (Place) -> Unit) {
                 )
             }
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { onDirections(place) }) { Text("Directions") }
+            androidx.compose.foundation.layout.Row {
+                TextButton(onClick = { onDirections(place) }) { Text("Directions") }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { onSave(place) }) { Text("Save") }
+            }
         }
     }
 }

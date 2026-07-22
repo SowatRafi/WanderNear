@@ -87,7 +87,9 @@ never guessed.
   one-shot GPS "near me" (falls back to the city centre), Directions +
   attribution, and an honest refusal on no match. MVP success test passes
   offline, before the LLM. Package `com.wandernear`; `core/` is Android-free.
-- **M3 — Travel Journal** (next): private "My Trips" — save visited places,
+- **M3 — Travel Journal** (in progress — J1 done: Room `journal.db`, save from
+  chat, My Trips list + detail with editable notes + delete-confirm; full
+  journal schema defined up front to avoid migrations): private "My Trips" — save visited places,
   notes, bucket list (todo/done), visit dates, photos (copied to app-private
   storage), anniversary reminders, and an on-open "you're back nearby" nudge.
   See "Travel Journal design" below.
