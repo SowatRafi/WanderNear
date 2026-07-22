@@ -47,4 +47,6 @@ dependencies {
     kapt(libs.androidx.room.compiler)
     // Coil — loads the traveller's local photos into Compose (thumbnails + viewer).
     implementation(libs.coil.compose)
+    // WorkManager — runs the daily anniversary check in the background.
+    implementation(libs.androidx.work.runtime)
 }

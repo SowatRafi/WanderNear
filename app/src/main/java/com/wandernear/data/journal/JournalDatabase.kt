@@ -70,6 +70,17 @@ interface JournalDao {
 
     @Delete
     suspend fun delete(photo: Photo)
+
+    // --- One-shot snapshots for the background reminders ---
+    @Query("SELECT v.visitedOn AS visitedOn, p.name AS placeName " +
+        "FROM visit_date v JOIN saved_place p ON p.id = v.savedPlaceId")
+    suspend fun allVisitsWithPlace(): List<VisitWithPlace>
+
+    @Query("SELECT * FROM saved_place")
+    suspend fun allSavedPlaces(): List<SavedPlace>
+
+    @Query("SELECT COUNT(*) FROM bucket_item WHERE savedPlaceId = :placeId AND status = 'todo'")
+    suspend fun todoCount(placeId: Long): Int
 }
 
 /** The traveller's private journal database (separate from the city pack). */

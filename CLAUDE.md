@@ -87,15 +87,12 @@ never guessed.
   one-shot GPS "near me" (falls back to the city centre), Directions +
   attribution, and an honest refusal on no match. MVP success test passes
   offline, before the LLM. Package `com.wandernear`; `core/` is Android-free.
-- **M3 — Travel Journal** (in progress — J1–J3 done: Room `journal.db`, save from
-  chat, My Trips list + detail with editable notes, bucket list (todo/done),
-  visit dates (date picker), photos (Photo Picker → app-private storage, caption,
-  delete) + delete-confirm everywhere; full journal schema defined up front to
-  avoid migrations. J4 = reminders remaining): private "My Trips" — save visited places,
+- **M3 — Travel Journal** ✅ Done (J1–J4: notes, bucket list, visit dates, photos,
+  anniversary + nearby-nudge reminders): private "My Trips" — save visited places,
   notes, bucket list (todo/done), visit dates, photos (copied to app-private
   storage), anniversary reminders, and an on-open "you're back nearby" nudge.
   See "Travel Journal design" below.
-- **M4 — On-device AI**: LiteRT-LM + Gemma 4 over the same retrieval, with
+- **M4 — On-device AI** (next): LiteRT-LM + Gemma 4 over the same retrieval, with
   grounding guardrails + the trick-test suite.
 - **M5 — Location + voice**: GPS "near me" search + Vosk offline voice.
 - **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.

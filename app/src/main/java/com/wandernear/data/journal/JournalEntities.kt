@@ -76,6 +76,9 @@ data class BucketItem(
     val updatedAt: Long,
 )
 
+/** Not a table — just the shape of the anniversary query (a visit + its place name). */
+data class VisitWithPlace(val visitedOn: Long, val placeName: String)
+
 /** A photo copied into the app's private storage for a saved place. */
 @Entity(
     tableName = "photo",

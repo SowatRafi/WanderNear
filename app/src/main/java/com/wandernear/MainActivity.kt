@@ -17,10 +17,22 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import com.wandernear.data.PreferencesRepository
+import com.wandernear.reminders.JournalReminders
 import com.wandernear.ui.ChatScreen
 import com.wandernear.ui.MyTripsScreen
 import com.wandernear.ui.PreferencesScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /** The two tabs in the bottom navigation bar. */
 private enum class Tab(val label: String, val icon: String) {
@@ -34,8 +46,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // applicationContext keeps the single app-wide DataStore instance.
         val prefsRepo = PreferencesRepository(applicationContext)
+        JournalReminders.scheduleDaily(this)   // background daily anniversary check
         setContent {
             MaterialTheme {
+                ReminderBootstrap()            // ask once, then run the on-open checks
                 AppScaffold(prefsRepo)
             }
         }
@@ -65,6 +79,39 @@ private fun AppScaffold(prefsRepo: PreferencesRepository) {
                 Tab.MyTrips -> MyTripsScreen()
                 Tab.Preferences -> PreferencesScreen(prefsRepo)
             }
+        }
+    }
+}
+
+/**
+ * On app open: request the notification permission once (Android 13+), then run
+ * the anniversary + "you're back nearby" checks. If the permission is declined,
+ * the checks still run but post nothing.
+ */
+@Composable
+private fun ReminderBootstrap() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    fun runChecks() {
+        scope.launch(Dispatchers.IO) {
+            JournalReminders.checkAnniversaries(context)
+            JournalReminders.checkNearbyNudge(context)
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { runChecks() }
+
+    LaunchedEffect(Unit) {
+        val needsAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        if (needsAsk) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            runChecks()
         }
     }
 }
