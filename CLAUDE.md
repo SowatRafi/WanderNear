@@ -126,3 +126,7 @@ CRUD uses Room; the read-only city pack is opened directly.
 - Plan first, get approval, then build — for every feature or change.
 - Small steps. Keep code simple and well-commented. Explain non-obvious things
   in one or two plain sentences. Don't dump large amounts of unexplained code.
+- **Always use the `ponytail` skill** on coding tasks (simplest solution that
+  works — no over-engineering) and the **`ui-ux-pro-max` skill** on UI/UX tasks.
+- **Comment code thoroughly** so a beginner can follow every file.
+- **Commit + push professionally** at each verified step (clear messages).
