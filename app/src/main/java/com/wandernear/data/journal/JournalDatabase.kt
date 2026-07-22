@@ -34,6 +34,29 @@ interface JournalDao {
 
     @Delete
     suspend fun delete(place: SavedPlace)
+
+    // --- Bucket list (what's left = the rows still status = "todo") ---
+    @Query("SELECT * FROM bucket_item WHERE savedPlaceId = :placeId ORDER BY createdAt")
+    fun bucketItems(placeId: Long): Flow<List<BucketItem>>
+
+    @Insert
+    suspend fun insert(item: BucketItem): Long
+
+    @Update
+    suspend fun update(item: BucketItem)
+
+    @Delete
+    suspend fun delete(item: BucketItem)
+
+    // --- Visit dates (each visit gives one anniversary) ---
+    @Query("SELECT * FROM visit_date WHERE savedPlaceId = :placeId ORDER BY visitedOn DESC")
+    fun visits(placeId: Long): Flow<List<VisitDate>>
+
+    @Insert
+    suspend fun insert(visit: VisitDate): Long
+
+    @Delete
+    suspend fun delete(visit: VisitDate)
 }
 
 /** The traveller's private journal database (separate from the city pack). */
