@@ -68,6 +68,7 @@ import com.wandernear.core.model.CountryFacts
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.UserPreferences
+import com.wandernear.core.model.haversineKm
 import com.wandernear.core.response.GroundingCheck
 import com.wandernear.core.response.Recommender
 import com.wandernear.core.retrieval.QueryParser
@@ -121,6 +122,22 @@ private val ESSENTIAL_CATEGORIES = listOf("safety", "health", "fuel", "parking")
 // so a stale fix or a fix in another city can never mislabel where you are.
 private const val LOCALITY_MAX_KM = 25.0
 private const val LOCALITY_FIX_MAX_AGE_MS = 10 * 60 * 1000L   // 10 minutes
+
+// How far from the active city your fix can be before we stop ranking by it. Beyond
+// this you're not in this city at all — you've downloaded somewhere you plan to go —
+// so "near you" is meaningless and we rank from the city centre instead. Generous
+// enough to cover a whole metro area and the towns around it.
+private const val AWAY_FROM_CITY_KM = 100.0
+
+/**
+ * Your location, but ONLY when you're actually inside the active city — otherwise null.
+ *
+ * Download Kyoto while standing in Melbourne and every result is truthfully 8,000 km
+ * away, which is useless, and calling them "near you" would be a lie. Returning null
+ * makes both callers fall back to the city centre and drop the "near you" wording.
+ */
+private fun fixInCity(fix: LatLng?, center: LatLng?): LatLng? =
+    fix?.takeIf { center == null || haversineKm(it, center) <= AWAY_FROM_CITY_KM }
 
 private enum class Role { User, Assistant }
 // Voice goes through three explicit states so the UI can be honest about what's
@@ -263,7 +280,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 
         scope.launch {
             val answer = withContext(Dispatchers.IO) {
-                val here = LocationProvider.lastKnown(context)   // null ⇒ no permission/fix
+                // null ⇒ no permission/fix, OR we're nowhere near this city (see fixInCity)
+                val here = fixInCity(LocationProvider.lastKnown(context), cityCenter)
                 val origin = here ?: cityCenter ?: MELBOURNE_CBD
                 val spec = QueryParser.parse(question, prefs)
                 val places = db.search(spec, origin)
@@ -348,7 +366,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         // Read location off the main thread (binder IPC). A stale fix is fine for
         // ranking; the "you are here" label below uses a FRESH fix only.
         val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
-        val origin = fix ?: center ?: MELBOURNE_CBD
+        val origin = fixInCity(fix, center) ?: center ?: MELBOURNE_CBD
         essentials = withContext(Dispatchers.IO) { db.nearestEssentials(origin, ESSENTIAL_CATEGORIES) }
         notable = withContext(Dispatchers.IO) { db.nearbyNotable(origin, NEARBY_RADIUS_KM) }
         // Which suburb am I in? Derived ON-DEVICE from the pack (no GPS ever leaves the

@@ -60,22 +60,21 @@ object CityPackBuilder {
     }
 
     /**
-     * Build a pack for [cityQuery] (e.g. "Geelong, Victoria, Australia"). [onProgress]
-     * reports a rough 0f..1f fraction. Does all IO on [Dispatchers.IO] and NEVER
-     * throws — every problem comes back as [Result.Failure].
+     * Build a pack for [match] — one of the areas [find] returned, so the user has
+     * already confirmed WHICH city, and we never geocode twice. [onProgress] reports
+     * a rough 0f..1f fraction. Does all IO on [Dispatchers.IO] and NEVER throws —
+     * every problem comes back as [Result.Failure].
      */
     suspend fun build(
         context: Context,
-        cityQuery: String,
+        match: Match,
         onProgress: (Float) -> Unit = {},
     ): Result = withContext(Dispatchers.IO) {
         var tmp: File? = null
         try {
             onProgress(0.03f)
-            val geo = geocode(cityQuery)
-                ?: return@withContext Result.Failure("Couldn't find \"$cityQuery\". Try a more specific name.")
-            val areaId = OsmClassifier.overpassAreaId(geo.osmType, geo.osmId)
-                ?: return@withContext Result.Failure("\"$cityQuery\" isn't a mappable area — try a city or town name.")
+            val areaId = OsmClassifier.overpassAreaId(match.osmType, match.osmId)
+                ?: return@withContext Result.Failure("\"${match.shortLabel}\" isn't a mappable area — try a city or town name.")
 
             onProgress(0.1f)
             val connection = fetchOverpass(OsmClassifier.overpassBody(areaId))
@@ -84,19 +83,19 @@ object CityPackBuilder {
             // The filename includes the OSM area id, so two same-named cities
             // (Paris, France vs Paris, Texas) never collide — while rebuilding the
             // SAME city reuses the same file.
-            val outFile = File(packsDir(context), slug(cityQuery) + "_" + geo.osmId + ".db")
+            val outFile = File(packsDir(context), slug(match.label) + "_" + match.osmId + ".db")
             val part = File(outFile.path + ".part").also { tmp = it }
             deletePack(part)
 
             val count = try {
-                writePack(context, part, cityQuery, geo, connection, onProgress)
+                writePack(context, part, match, connection, onProgress)
             } finally {
                 connection.disconnect()
             }
 
             if (count == 0) {
                 deletePack(part)
-                return@withContext Result.Failure("No places found for \"$cityQuery\".")
+                return@withContext Result.Failure("No places found for \"${match.shortLabel}\".")
             }
             // Publish atomically: only a fully-built pack ever gets the real name.
             deletePack(outFile)
@@ -106,7 +105,7 @@ object CityPackBuilder {
             }
             deletePack(part)     // the renamed .db is live; drop the .part's leftover -journal sidecar
             onProgress(1f)
-            Result.Success(outFile, cityQuery, count)
+            Result.Success(outFile, match.label, count)
         } catch (e: CancellationException) {
             tmp?.let { deletePack(it) }   // cancelled build → drop the partial pack, then propagate
             throw e
@@ -116,42 +115,63 @@ object CityPackBuilder {
         }
     }
 
-    // ---- Geocoding (Nominatim) -------------------------------------------------
+    // ---- Searching for a city (Nominatim) --------------------------------------
 
-    /** The bits of a Nominatim result we need to scope the query and fill the city row. */
-    private class Geo(
-        val osmType: String, val osmId: Long,
-        val country: String?, val population: Long?,
-        val south: Double, val north: Double, val west: Double, val east: Double,
-    )
+    // Only these can scope an Overpass area query — see [find].
+    private val AREA_TYPES = setOf("relation", "way")
 
     /**
-     * Look up a city name → its OSM area + facts. Null if no AREA is found.
-     *
-     * We ask for several results and pick the first that's an area (a relation or
-     * way) — a plain node (a point) can't scope an Overpass area query, and
-     * Nominatim doesn't always rank the area first (e.g. "Geelong" returns the city
-     * node before its boundary relation). This is what makes "any city" robust.
+     * One real area OpenStreetMap returned for a search: what the user picks from,
+     * and what [build] then uses. [label] is Nominatim's own `display_name`, shown
+     * verbatim so "Paris, Texas" can never be mistaken for "Paris, France" — we
+     * never re-word it. The rest is what the pack's `city` row needs.
      */
-    private fun geocode(query: String): Geo? {
-        val url = "$NOMINATIM_URL?q=${URLEncoder.encode(query, "UTF-8")}" +
-            "&format=json&limit=10&addressdetails=1&extratags=1"
-        val body = httpGet(url) ?: return null
-        val results = JSONArray(body)
-        for (i in 0 until results.length()) {
-            val o = results.getJSONObject(i)
-            val type = o.getString("osm_type")
-            if (type == "relation" || type == "way") return parseGeo(o, type)
-        }
-        return null
+    class Match internal constructor(
+        val label: String,
+        internal val osmType: String, internal val osmId: Long,
+        internal val country: String?, internal val population: Long?,
+        internal val south: Double, internal val north: Double,
+        internal val west: Double, internal val east: Double,
+    ) {
+        /** Just the leading name, for headings — e.g. "Geelong". */
+        val shortLabel: String get() = label.substringBefore(',').trim()
     }
 
-    private fun parseGeo(o: JSONObject, type: String): Geo {
+    /**
+     * Search OpenStreetMap for [query] and return the real AREAS it matched, at most
+     * [limit]. NEVER throws: an empty list means "nothing matched, or we couldn't
+     * reach the server" — the caller says that honestly instead of guessing.
+     *
+     * Only relations and ways are kept: a plain node is a single point and can't
+     * scope an Overpass area query, and Nominatim often ranks a city's node above its
+     * boundary relation (which is why a bare "Geelong" used to fail). Returning
+     * several matches — rather than silently taking the first — is what lets the user
+     * confirm they're getting Paris, France and not Paris, Texas.
+     *
+     * PRIVACY: the only thing sent is the city name the user typed. Never their location.
+     */
+    suspend fun find(query: String, limit: Int = 5): List<Match> = withContext(Dispatchers.IO) {
+        val url = "$NOMINATIM_URL?q=${URLEncoder.encode(query, "UTF-8")}" +
+            "&format=json&limit=10&addressdetails=1&extratags=1"
+        val body = httpGet(url) ?: return@withContext emptyList()
+        // A malformed/unexpected response is treated as "no matches", never a crash.
+        runCatching {
+            val results = JSONArray(body)
+            (0 until results.length())
+                .map { results.getJSONObject(it) }
+                .filter { it.optString("osm_type") in AREA_TYPES }
+                .take(limit)
+                .map { parseMatch(it) }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parseMatch(o: JSONObject): Match {
         val bbox = o.getJSONArray("boundingbox")   // [south, north, west, east] as strings
         val address = o.optJSONObject("address")
         val extra = o.optJSONObject("extratags")
-        return Geo(
-            osmType = type,
+        return Match(
+            label = o.getString("display_name"),
+            osmType = o.getString("osm_type"),
             osmId = o.getLong("osm_id"),
             country = address?.optString("country")?.ifBlank { null },
             population = parsePopulation(extra?.optString("population")),
@@ -213,6 +233,10 @@ object CityPackBuilder {
                 connectTimeout = 30_000
                 readTimeout = 60_000
                 setRequestProperty("User-Agent", USER_AGENT)
+                // Ask for names in the PHONE's language. Without this, Nominatim answers
+                // in each place's own language — searching "Kyoto" comes back as "京都市",
+                // which we'd then store as the city's name and show on every heading.
+                setRequestProperty("Accept-Language", Locale.getDefault().toLanguageTag())
             }
             if (conn.responseCode == 200) conn.inputStream.bufferedReader().use { it.readText() }
             else { conn.errorStream?.close(); null }   // drain the error body so the socket is freed
@@ -231,7 +255,7 @@ object CityPackBuilder {
      * number of places kept.
      */
     private fun writePack(
-        context: Context, dbFile: File, cityQuery: String, geo: Geo,
+        context: Context, dbFile: File, match: Match,
         connection: HttpURLConnection, onProgress: (Float) -> Unit,
     ): Int {
         val db = SQLiteDatabase.openOrCreateDatabase(dbFile, null)
@@ -239,7 +263,7 @@ object CityPackBuilder {
             applySchema(context, db)
             db.beginTransaction()
             try {
-                insertCity(db, cityQuery, geo)
+                insertCity(db, match)
                 val count = connection.inputStream.use { input ->
                     JsonReader(InputStreamReader(input, Charsets.UTF_8)).use { reader ->
                         streamElements(reader, db, onProgress)
@@ -268,16 +292,18 @@ object CityPackBuilder {
             .forEach { db.execSQL(it) }
     }
 
-    private fun insertCity(db: SQLiteDatabase, cityQuery: String, geo: Geo) {
+    private fun insertCity(db: SQLiteDatabase, match: Match) {
         val cv = ContentValues().apply {
             put("id", 1)
-            put("name", cityQuery)                 // stored as typed, e.g. "Geelong, Victoria, Australia"
-            geo.country?.let { put("country", it) }
-            geo.population?.let { put("population", it) }
-            put("osm_type", geo.osmType)
-            put("osm_id", geo.osmId)
-            put("min_lat", geo.south); put("min_lng", geo.west)
-            put("max_lat", geo.north); put("max_lng", geo.east)
+            // OSM's own display_name, not the user's typing — so the city row says
+            // exactly what the map data says (CityInfo.shortName trims it for headings).
+            put("name", match.label)
+            match.country?.let { put("country", it) }
+            match.population?.let { put("population", it) }
+            put("osm_type", match.osmType)
+            put("osm_id", match.osmId)
+            put("min_lat", match.south); put("min_lng", match.west)
+            put("max_lat", match.north); put("max_lng", match.east)
             put("data_version", isoDate("yyyy-MM-dd"))
             put("fetched_at", isoDate("yyyy-MM-dd'T'HH:mm:ss'Z'"))
             put("attribution", ATTRIBUTION)

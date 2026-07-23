@@ -10,25 +10,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wandernear.core.model.UserPreferences
-import com.wandernear.data.CityDatabase
-import com.wandernear.data.CityPackBuilder
 import com.wandernear.data.PreferencesRepository
 import kotlinx.coroutines.launch
 
@@ -84,16 +77,15 @@ fun PreferencesScreen(repo: PreferencesRepository) {
             scope.launch { repo.setTravelStyle(if (prefs.travelStyle == key) null else key) }
         }
 
+        // Switching/adding a city changes everything else on screen, so it comes first.
+        Spacer(Modifier.height(24.dp))
+        CitiesSection(repo)
+
         Spacer(Modifier.height(24.dp))
         AiSettingsSection(repo)
 
         Spacer(Modifier.height(24.dp))
         TravelModeSection(repo)
-
-        // TEMPORARY (M6.4b/c): a dev trigger to verify the on-device pack builder +
-        // active-city switch before the real "Download a city" screen arrives in M6.4d.
-        // Delete both this and the TempPackBuilderSection composable below when that lands.
-        TempPackBuilderSection(repo)
     }
 }
 
@@ -124,47 +116,3 @@ private fun ChipRow(
 
 private fun <T> Set<T>.toggle(item: T): Set<T> =
     if (contains(item)) this - item else this + item
-
-// TEMPORARY (M6.4b): remove together with its call site when M6.4d ships the real
-// "Download a city" screen. Builds a fixed small city so we can verify the whole
-// on-device path end-to-end (then pull + inspect the resulting pack).
-@Composable
-private fun TempPackBuilderSection(repo: PreferencesRepository) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val activePack by repo.activePack.collectAsState(initial = CityDatabase.BUNDLED_PACK)
-    var building by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
-    var result by remember { mutableStateOf<String?>(null) }
-
-    Section("Dev: build a city pack")
-    Text("Active pack: $activePack", style = MaterialTheme.typography.bodySmall)
-    Spacer(Modifier.height(8.dp))
-    Button(
-        enabled = !building,
-        onClick = {
-            building = true
-            progress = 0f
-            result = null
-            scope.launch {
-                val r = CityPackBuilder.build(context, "Geelong, Victoria, Australia") { progress = it }
-                result = when (r) {
-                    is CityPackBuilder.Result.Success -> {
-                        repo.setActivePack("packs/" + r.file.name)   // switch to the freshly built pack
-                        "Built & switched to ${r.cityName}: ${r.placeCount} places"
-                    }
-                    is CityPackBuilder.Result.Failure -> "Failed: ${r.message}"
-                }
-                building = false
-            }
-        },
-    ) { Text(if (building) "Building… ${(progress * 100).toInt()}%" else "Build + switch to Geelong") }
-    Spacer(Modifier.height(4.dp))
-    Button(onClick = { scope.launch { repo.setActivePack(CityDatabase.BUNDLED_PACK) } }) {
-        Text("Reset to Melbourne")
-    }
-    result?.let {
-        Spacer(Modifier.height(8.dp))
-        Text(it, style = MaterialTheme.typography.bodySmall)
-    }
-}
