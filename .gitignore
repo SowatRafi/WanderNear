@@ -22,6 +22,7 @@ app/build/
 .claude/settings.local.json
 # Runtime scratch from the ruflo / claude-flow MCP tooling — not part of the app.
 .claude-flow/
+.swarm/
 .claude/proven-config.json
 .claude/.proven-config-version
 

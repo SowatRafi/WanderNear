@@ -16,7 +16,7 @@ import kotlin.math.sqrt
 data class Place(
     val id: Int,
     val name: String,
-    val category: String,        // food | worship | attraction | outdoor
+    val category: String,        // food | worship | attraction | outdoor | shopping | safety
     val subcategory: String?,    // e.g. restaurant, viewpoint, mosque
     val lat: Double,
     val lng: Double,

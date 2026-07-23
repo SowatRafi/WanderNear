@@ -38,6 +38,14 @@ class RecommenderTest {
     }
 
     @Test
+    fun reply_shopping_describesShoppingSpots() {
+        val reply = Recommender.reply(
+            SearchSpec(category = "shopping"), listOf(place("Queen Victoria Market")), nearYou = true,
+        )
+        assertTrue(reply.contains("shopping spots"))
+    }
+
+    @Test
     fun aiPrompt_listsEveryRetrievedPlace() {
         val places = listOf(place("Akshaya"), place("Mr Ed Coffee & More"))
         val prompt = Recommender.aiPrompt("food", places, nearYou = true)

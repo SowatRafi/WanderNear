@@ -9,7 +9,7 @@ import com.wandernear.core.model.UserPreferences
  */
 data class SearchSpec(
     val ftsTerms: List<String> = emptyList(),
-    val category: String? = null,   // food | worship | attraction | outdoor
+    val category: String? = null,   // food | worship | attraction | outdoor | shopping | safety
     val religion: String? = null,
     val diets: Set<String> = emptySet(),
 )
@@ -30,7 +30,7 @@ object QueryParser {
         "gluten" to "gluten_free", "glutenfree" to "gluten_free",
     )
 
-    // Words that signal one of our four categories.
+    // Words that signal one of our place categories.
     private val CATEGORY_WORDS = mapOf(
         "food" to "food", "eat" to "food", "restaurant" to "food", "restaurants" to "food",
         "cafe" to "food", "cafes" to "food", "coffee" to "food", "breakfast" to "food",
@@ -45,6 +45,9 @@ object QueryParser {
         "park" to "outdoor", "parks" to "outdoor", "beach" to "outdoor", "beaches" to "outdoor",
         "hike" to "outdoor", "hiking" to "outdoor", "trail" to "outdoor", "nature" to "outdoor",
         "outdoor" to "outdoor", "outdoors" to "outdoor", "viewpoint" to "outdoor", "garden" to "outdoor",
+        "shopping" to "shopping", "shop" to "shopping", "shops" to "shopping",
+        "market" to "shopping", "markets" to "shopping", "mall" to "shopping",
+        "malls" to "shopping", "souvenir" to "shopping", "souvenirs" to "shopping",
     )
 
     // Words that pin down a specific religion (so "mosque" → muslim). "temple" is

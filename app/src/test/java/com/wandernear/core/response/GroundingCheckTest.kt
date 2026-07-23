@@ -73,4 +73,14 @@ class GroundingCheckTest {
         val text = "Try Akshaya, or the wonderful Sunset Grill down the road."
         assertFalse(GroundingCheck.isGrounded(text, places))
     }
+
+    @Test
+    fun invented_shoppingVenue_withSafeWord_isRejected() {
+        // Shopping is AI-reworded too. An invented venue whose only novel word is a
+        // shopping marker paired with a safe word (the city name) must still be caught,
+        // while a real retrieved mall stays grounded.
+        val malls = listOf(place("Pacific Werribee"), place("Highpoint"))
+        assertFalse(GroundingCheck.isGrounded("Try Highpoint, or the new Melbourne Emporium.", malls))
+        assertTrue(GroundingCheck.isGrounded("Highpoint is a great mall to explore.", malls))
+    }
 }

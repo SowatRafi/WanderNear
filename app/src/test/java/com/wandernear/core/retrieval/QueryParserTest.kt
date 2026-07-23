@@ -43,6 +43,12 @@ class QueryParserTest {
     }
 
     @Test
+    fun detectsShopping() {
+        assertEquals("shopping", QueryParser.parse("shopping near me", UserPreferences()).category)
+        assertEquals("shopping", QueryParser.parse("markets", UserPreferences()).category)
+    }
+
+    @Test
     fun nonsenseQuery_getsNoFilters() {
         val spec = QueryParser.parse("zxcvbnm", UserPreferences())
         assertNull(spec.category)          // won't wrongly narrow to a category

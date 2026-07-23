@@ -31,9 +31,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -106,7 +108,7 @@ import kotlinx.coroutines.withContext
 private val MELBOURNE_CBD = LatLng(-37.8136, 144.9631)
 
 // Example prompts shown on the empty screen to help the user get started.
-private val EXAMPLES = listOf("Vegetarian food", "Temples", "Halal food", "Parks & nature", "Museums")
+private val EXAMPLES = listOf("Vegetarian food", "Temples", "Halal food", "Parks & nature", "Museums", "Shopping & markets")
 
 private enum class Role { User, Assistant }
 // Voice goes through three explicit states so the UI can be honest about what's
@@ -397,9 +399,12 @@ private fun EmptyState(
     modifier: Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(24.dp),
+        // Scrollable: with the City Info + Nearest-police cards always present, the
+        // welcome text and example chips can sit below the fold on smaller screens —
+        // without this they'd be clipped and unreachable.
+        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Top,
     ) {
         // A compact snapshot of the city you're exploring, plus a one-tap dialer
         // for the local emergency number.

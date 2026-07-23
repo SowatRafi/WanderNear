@@ -21,6 +21,9 @@ TOURISM = {"attraction", "viewpoint", "museum", "artwork", "gallery",
 NATURAL = {"beach", "peak", "waterfall", "water", "cliff", "cave_entrance",
            "spring", "bay", "hot_spring", "volcano"}
 LEISURE = {"park", "nature_reserve", "garden", "beach_resort"}
+# Traveller shopping destinations — kept tight (markets, malls, department stores)
+# on purpose, so we surface real "go shopping here" spots, not every corner store.
+SHOPPING = {"mall", "department_store"}
 
 
 def classify(tags):
@@ -32,6 +35,10 @@ def classify(tags):
         return "worship", tags.get("religion") or "place_of_worship"
     if amenity == "police":
         return "safety", "police"
+    if amenity == "marketplace":
+        return "shopping", "marketplace"
+    if tags.get("shop") in SHOPPING:
+        return "shopping", tags["shop"]
     if tags.get("tourism") in TOURISM:
         return "attraction", tags["tourism"]
     if tags.get("historic"):

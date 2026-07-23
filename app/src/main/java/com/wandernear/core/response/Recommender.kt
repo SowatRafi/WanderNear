@@ -74,6 +74,7 @@ object Recommender {
             "worship" -> "places of worship"
             "attraction" -> "attractions"
             "outdoor" -> "outdoor spots"
+            "shopping" -> "shopping spots"
             else -> "places"
         }
     }

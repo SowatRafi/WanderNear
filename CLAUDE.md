@@ -140,8 +140,20 @@ never guessed.
       generic pipeline now fetches `amenity=police` (new `safety` category) so ANY
       city gets them; the Melbourne pack was rebuilt (114 stations, 46 with phones).
       Grounded like everything else: every station is a real retrieved row.
-    - Remaining: download-a-city flow + background refresh, shopping spots,
-      annual festivals.
+    - **M6.3** ✅ Shopping spots — a new `shopping` retrieval category added the same
+      generic way as M6.2: the pipeline fetches `amenity=marketplace` +
+      `shop=mall|department_store`, so ANY city gets them; the Melbourne pack was
+      rebuilt (480 shopping rows: 275 mall, 164 department store, 41 marketplace).
+      Unlike police it's a *searchable* category (no new card) — "shopping"/"markets"
+      ride the existing retrieval→template/AI→cards path (Directions + Save +
+      attribution), grounded to real rows. An adversarial self-review (multi-agent,
+      finding verified) caught that the AI grounding guard's venue vocabulary lacked
+      shopping words, so `GroundingCheck.VENUE_WORDS` was extended (mall/store/plaza/
+      emporium/…) to keep an invented shopping name out of the reworded intro —
+      parity with the other categories, covered by a new unit test. Also fixed a
+      latent UX bug the tall City-Info/police cards exposed: the empty home screen
+      now scrolls, so the example chips are reachable on smaller screens.
+    - Remaining: download-a-city flow + background refresh, annual festivals.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs

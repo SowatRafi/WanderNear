@@ -20,7 +20,7 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 
 | Milestone | Status | What it delivered |
 |---|---|---|
-| **M1** Data pipeline | ✅ | Python (`pipeline/`) builds `melbourne.db` from OSM Overpass + Wikipedia. Now **20,206 places** (incl. 114 police) + FTS. |
+| **M1** Data pipeline | ✅ | Python (`pipeline/`) builds `melbourne.db` from OSM Overpass + Wikipedia. Now **20,693 places** (incl. 480 shopping, 114 police) + FTS. |
 | **M2** App + templates + GPS | ✅ | Compose chat + preferences; loads the DB; grounded **templated** recommendations; one-shot GPS "near me" (falls back to CBD); Directions (`geo:` intent) + attribution; honest refusal on no match. **MVP success test passes offline.** |
 | **M3** Travel Journal | ✅ | Private "My Trips" (separate Room `journal.db`): save places, notes, bucket list (todo/done), visit dates, photos (Photo Picker → app-private storage), anniversary reminders (WorkManager) + on-open "you're back nearby" nudge. Edit/delete everywhere with confirm. |
 | **M4** On-device AI | ✅ | **LiteRT-LM 0.14.0 + Gemma 4 E2B** rewords the retrieved rows into warm prose (opt-in, temperature 0). 5-layer anti-hallucination + `GroundingCheck` validator + **16-test** adversarial suite. Template stays the guaranteed fallback. |
@@ -28,9 +28,10 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 | **TM** Travel Mode | ✅ | Opt-in Preferences toggle → a WHILE-IN-USE location foreground service with an always-visible "Travel Mode is on" banner (no background location). **TM.1:** toggle + service + banner + Stop; START_NOT_STICKY; MainActivity self-heals a stale switch. **TM.2:** battery-friendly live location watch (~2 min / ~120 m) firing grounded "worth a visit nearby" alerts within 300 m (`CityDatabase.nearbyNotable` — real rows only, de-duped). Banner is the privacy guarantee; refuses to run if its channel is muted. |
 | **M6.1** City Info card | ✅ | Home-screen card: population/currency/emergency number, with a safe Call-emergency dial (`ACTION_DIAL`, never auto-calls). Pipeline captures country + population. |
 | **M6.2** Safety section | ✅ | Home-screen **"Nearest police"** card under City Info: 3 nearest police stations, each with Directions (always) + Call (only when OSM lists a phone). Generic pipeline now fetches `amenity=police` (new `safety` category) so ANY city gets them; Melbourne pack rebuilt (114 stations, 46 with phones). Verified on device. |
+| **M6.3** Shopping spots | ✅ | New **`shopping`** retrieval category (markets + malls + department stores) via `amenity=marketplace` + `shop=mall\|department_store`, so ANY city gets them; Melbourne rebuilt (480 rows). **Searchable, no new card:** "shopping"/"markets" ride the existing retrieval→template/AI→cards path (Directions + Save + attribution), grounded to real rows. Also fixed a latent UX bug the tall cards exposed — the empty home screen now scrolls, so example chips are reachable. Verified end-to-end on device. |
 
 ### Remaining
-- **M6 (rest)** — the **"Download data for [city]?" flow** (reuse the M1 pipeline) + silent background refresh; plus shopping spots and annual festivals. (Dropped as not free/offline/groundable or unsafe to auto-trigger: live events, "current leaders", voice-command auto-calling.)
+- **M6 (rest)** — the **"Download data for [city]?" flow** (reuse the M1 pipeline) + silent background refresh; plus annual festivals. (Dropped as not free/offline/groundable or unsafe to auto-trigger: live events, "current leaders", voice-command auto-calling.)
   - ⚠️ The refresh work must handle updating an *existing* install's pack — see the DB-copy gotcha below.
 - **M7** — Travel Journal v2: voice + video memos, and a smarter "you forgot this" bucket-list nudge when you return near a saved place.
 
@@ -100,7 +101,7 @@ adb shell am start -n com.wandernear/.MainActivity
 - **LiteRT-LM ships Kotlin 2.3 metadata** — that forced the whole toolchain up (Kotlin 2.3.21, KSP 2.3.10, Room 2.8.4, AGP 8.10.1, Compose 2026) and `minSdk 31`.
 - **Run one shell** (PowerShell) for builds; don't mix with Git Bash `./gradlew`.
 - Pixel 6 (Tensor G1, 2021): first LLM load ~50 s, then ~8–18 tok/s. Voice model is small — best for short, clear phrases.
-- **Bundled pack is copied assets→`filesDir` ONCE** (`CityDatabase.open()` only copies `if (!dbFile.exists())`). So shipping a NEW `melbourne.db` (e.g. M6.2 added police) does **not** reach an existing install via `adb install -r` — the old DB persists in `filesDir`. To see a new pack: `adb shell pm clear com.wandernear` (or uninstall). The future M6 refresh flow must version the pack and re-copy when the bundled one is newer.
+- **Bundled pack is copied assets→`filesDir` ONCE** (`CityDatabase.open()` only copies `if (!dbFile.exists())`). So shipping a NEW `melbourne.db` (e.g. M6.2 added police) does **not** reach an existing install via `adb install -r` — the old DB persists in `filesDir`. To see a new pack: `adb shell pm clear com.wandernear` (or uninstall). The future M6 refresh flow must version the pack and re-copy when the bundled one is newer. **Tip:** `pm clear` also wipes the 2.6 GB side-loaded LLM (`files/models/`); to load a new pack WITHOUT re-downloading it, instead run `adb shell run-as com.wandernear rm -f files/melbourne.db` and relaunch — the app re-copies the fresh pack and the model survives. (Used this for the M6.3 rebuild.)
 
 ## Conventions (from CLAUDE.md)
 

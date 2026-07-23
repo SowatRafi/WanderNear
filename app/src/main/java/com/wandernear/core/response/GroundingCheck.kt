@@ -25,6 +25,10 @@ object GroundingCheck {
         "grill", "kitchen", "diner", "teahouse", "temple", "church", "mosque",
         "synagogue", "shrine", "cathedral", "chapel", "park", "gardens", "garden",
         "museum", "gallery", "beach", "reserve", "market", "hotel", "inn",
+        // Shopping venue markers, so an invented mall/store name in the AI intro is
+        // caught the same way food venues are — parity for the new shopping category.
+        "mall", "malls", "plaza", "arcade", "emporium", "outlet", "bazaar",
+        "department", "store", "stores",
     )
 
     // Words that are fine to see capitalized without being a place (sentence

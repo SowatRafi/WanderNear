@@ -109,6 +109,8 @@ area({area_id})->.a;
   nwr["natural"~"^(beach|peak|waterfall|water|cliff|cave_entrance|spring|bay|hot_spring|volcano)$"](area.a);
   nwr["leisure"~"^(park|nature_reserve|garden|beach_resort)$"](area.a);
   nwr["amenity"="police"](area.a);
+  nwr["amenity"="marketplace"](area.a);
+  nwr["shop"~"^(mall|department_store)$"](area.a);
   relation["route"="hiking"](area.a);
 );
 out center tags;
