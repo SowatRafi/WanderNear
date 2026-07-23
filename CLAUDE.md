@@ -216,16 +216,31 @@ never guessed.
       gets Wikidata festivals plus an honest "nothing listed". Licence-gated to CC0/CC-BY,
       with `summary_url` + `summary_license` stored per event. REJECTED as not free/legal/
       groundable: scraping event sites, Eventbrite/Ticketmaster/Meetup.
-- **TM.3 — "Around you now"** (approved 2026-07-24, not started): while Travel Mode is on,
-  surface food / shopping / fuel / parking / local favourites / worth-visiting near the
-  current fix from the ACTIVE pack (every category already exists in `OsmClassifier`;
-  `TravelModeService` currently only uses `nearbyNotable`). MUST be a **digest** — one
-  low-priority notification that UPDATES IN PLACE plus an in-app card; a separate buzz per
-  café is unusable. **"Local hotspot" has no groundable popularity source in OSM**, so it is
-  defined as: has a Wikipedia summary, OR `tourism=attraction|viewpoint`, OR marketplace /
-  park / bar / pub / café — labelled "Local favourites", never "locals love this" (that
-  would be invented → rule #5). Any online refresh is scoped to the ACTIVE PACK's area,
-  NEVER the live GPS fix.
+- **TM.3 — "Around you now"** ✅ Done. While Travel Mode is on, the nearest **food /
+  shopping / outdoors** from the active pack appear in an "Around you now" card under City
+  Info, and in the ongoing banner. **The banner Travel Mode already shows IS the digest** —
+  there is still exactly ONE notification, updated in place as you move, so it can never
+  become a stream of buzzes; only the TM.2 "worth a visit" hit still makes a sound. The
+  banner is `VISIBILITY_PRIVATE` with a **redacted public version**, so a locked screen
+  shows that Travel Mode is on (the privacy guarantee) but not which café you're beside.
+  Fuel/parking/police/hospital are deliberately NOT repeated — they're already on "Daily
+  needs near you". **"Local hotspot" has no groundable popularity source in OSM**, so it
+  isn't a bucket: cafés/bars/pubs come through `food`, parks/beaches/viewpoints through
+  `outdoor`, and anything with a Wikipedia article through "Worth visiting" — we never
+  claim "locals love this" (that would be invented → rule #5).
+    - The screen reads the service's `StateFlow` instead of requesting its own location, so
+      Travel Mode stays the single place that watches you.
+    - Three subtleties found while building: the digest must seed from ANY last-known fix
+      (updates only arrive once you've MOVED, so a stationary user would see nothing) while
+      the ALERT stays fresh-fix-only; a digest is tagged with its pack and dropped if it
+      doesn't match the active city (it only refreshes on movement, so after a switch the
+      old one would list another city's places); and `nearestEssentials` needed an optional
+      radius + bbox prefilter, or "nearest food" measured every café in the pack every
+      couple of minutes.
+    - `fixInCity`, `categoryLabel` and `distanceLabel` now live in `core/` (unit-tested), so
+      the service and the home screen share one rule instead of each deriving it. One shared
+      `NearbyCard` renders both cards at three lines per entry instead of five, and
+      distances read as metres up close, rounded to 10 m (a fix isn't metre-accurate).
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs
