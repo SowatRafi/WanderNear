@@ -14,7 +14,7 @@ from datetime import date, datetime, timezone
 
 import config
 
-# Which OSM tag values map to which of our four app categories.
+# Which OSM tag values map to which of our app categories.
 FOOD = {"restaurant", "cafe", "fast_food", "food_court", "bar", "pub", "ice_cream"}
 TOURISM = {"attraction", "viewpoint", "museum", "artwork", "gallery",
            "zoo", "theme_park", "aquarium"}
@@ -30,6 +30,8 @@ def classify(tags):
         return "food", amenity
     if amenity == "place_of_worship":
         return "worship", tags.get("religion") or "place_of_worship"
+    if amenity == "police":
+        return "safety", "police"
     if tags.get("tourism") in TOURISM:
         return "attraction", tags["tourism"]
     if tags.get("historic"):
@@ -110,7 +112,7 @@ def main():
     )
 
     kept, skipped = 0, 0
-    counts = {"food": 0, "worship": 0, "attraction": 0, "outdoor": 0}
+    counts = {}   # category -> how many kept; grows as new categories appear
 
     for element in elements:
         tags = element.get("tags", {})
@@ -149,7 +151,7 @@ def main():
             continue
         place_id = cursor.lastrowid
         kept += 1
-        counts[category] += 1
+        counts[category] = counts.get(category, 0) + 1
 
         # Dietary tags: diet:halal=yes, diet:vegetarian=only, etc.
         for key, value in tags.items():

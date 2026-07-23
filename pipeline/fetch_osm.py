@@ -92,7 +92,7 @@ def area_id_for(osm_type, osm_id):
 
 
 def build_query(area_id):
-    """Build the Overpass query that collects our four place categories.
+    """Build the Overpass query that collects our place categories.
 
     `nwr` means "nodes, ways and relations". `out center tags;` gives every
     result a single lat/lon point plus its tags — exactly what we need for map
@@ -108,6 +108,7 @@ area({area_id})->.a;
   nwr["historic"~"^(monument|memorial|castle|ruins|archaeological_site|monastery)$"](area.a);
   nwr["natural"~"^(beach|peak|waterfall|water|cliff|cave_entrance|spring|bay|hot_spring|volcano)$"](area.a);
   nwr["leisure"~"^(park|nature_reserve|garden|beach_resort)$"](area.a);
+  nwr["amenity"="police"](area.a);
   relation["route"="hiking"](area.a);
 );
 out center tags;

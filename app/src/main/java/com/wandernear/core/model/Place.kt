@@ -24,6 +24,7 @@ data class Place(
     val cuisine: String?,
     val religion: String?,
     val summary: String?,        // short "why it matters" text from Wikipedia
+    val phone: String? = null,   // raw OSM phone, e.g. for a police station's Call button
     val diets: Set<String> = emptySet(),  // dietary tags present (value != "no")
     val distanceKm: Double? = null,       // filled in when we rank by distance
 )

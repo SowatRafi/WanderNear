@@ -90,8 +90,7 @@ class CityDatabase(private val context: Context) {
         // Rough bounding box so we don't scan all ~20k rows (lat/lng aren't indexed).
         val dLat = radiusKm / 111.0
         val dLng = radiusKm / (111.0 * cos(Math.toRadians(origin.lat)).coerceAtLeast(0.01))
-        val sql = "SELECT p.id, p.name, p.category, p.subcategory, p.lat, p.lng, " +
-            "p.address, p.cuisine, p.religion, p.summary FROM place p " +
+        val sql = "SELECT $PLACE_COLS FROM place p " +
             "WHERE (p.summary IS NOT NULL OR p.category = 'attraction') " +
             "AND p.lat BETWEEN ? AND ? AND p.lng BETWEEN ? AND ?"
         val args = arrayOf(
@@ -101,6 +100,20 @@ class CityDatabase(private val context: Context) {
         db.rawQuery(sql, args).use { readPlaces(it) }
             .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
             .filter { (it.distanceKm ?: Double.MAX_VALUE) <= radiusKm }
+            .sortedBy { it.distanceKm }
+            .take(limit)
+    }
+
+    /**
+     * Nearest police stations to [origin] (the Safety section). Grounded: every
+     * row is a real `amenity=police` place from the pack — we never invent one.
+     * Unlike Travel Mode's [nearbyNotable] there's no radius cap: in a quiet area
+     * the closest station can be far, and we still want to point the user to it.
+     */
+    fun nearbyPolice(origin: LatLng, limit: Int = 3): List<Place> = open().use { db ->
+        val sql = "SELECT $PLACE_COLS FROM place p WHERE p.category = 'safety'"
+        db.rawQuery(sql, null).use { readPlaces(it) }
+            .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
             .sortedBy { it.distanceKm }
             .take(limit)
     }
@@ -133,8 +146,7 @@ class CityDatabase(private val context: Context) {
 
         val whereSql = "WHERE " + where.joinToString(" AND ")
         // Cap candidates; we only need the nearest handful after ranking.
-        val sql = "SELECT p.id, p.name, p.category, p.subcategory, p.lat, p.lng, " +
-            "p.address, p.cuisine, p.religion, p.summary FROM $from $whereSql LIMIT 300"
+        val sql = "SELECT $PLACE_COLS FROM $from $whereSql LIMIT 300"
         return db.rawQuery(sql, args.toTypedArray()).use { readPlaces(it) }
     }
 
@@ -152,6 +164,7 @@ class CityDatabase(private val context: Context) {
                 cuisine = c.getStringOrNull(7),
                 religion = c.getStringOrNull(8),
                 summary = c.getStringOrNull(9),
+                phone = c.getStringOrNull(10),
             )
         }
         return out
@@ -179,5 +192,10 @@ class CityDatabase(private val context: Context) {
     private companion object {
         const val DB_NAME = "melbourne.db"
         val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
+
+        // The place columns every query selects, in the exact order [readPlaces]
+        // reads them (index 0..10). Kept in one place so the order can never drift.
+        const val PLACE_COLS = "p.id, p.name, p.category, p.subcategory, p.lat, p.lng, " +
+            "p.address, p.cuisine, p.religion, p.summary, p.phone"
     }
 }

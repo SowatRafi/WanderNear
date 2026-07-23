@@ -128,12 +128,20 @@ never guessed.
   commit. Build gotcha hit here: a corrupted Gradle transforms cache made AAPT2
   crash on link even for known-good code — fix is
   `rm -rf ~/.gradle/caches/<ver>/transforms` then rebuild.
-- **M6 — Any city + richer pack**: "Download data for [city]?" flow + silent
-  background refresh; plus a City Info card (population/currency/emergency number),
-  a Safety section (police stations), shopping spots, annual festivals, and
-  Call/Directions buttons. (Live/real-time events, "current leaders", and
-  voice-command auto-calling were considered and dropped — not free/offline/
-  groundable, or unsafe to auto-trigger.)
+- **M6 — Any city + richer pack** (in progress): "Download data for [city]?" flow
+  + silent background refresh; plus a City Info card, a Safety section, shopping
+  spots, annual festivals, and Call/Directions buttons. (Live/real-time events,
+  "current leaders", and voice-command auto-calling were considered and dropped —
+  not free/offline/groundable, or unsafe to auto-trigger.)
+    - **M6.1** ✅ City Info card (population/currency/emergency) with a safe
+      Call-emergency dial.
+    - **M6.2** ✅ Safety section — the nearest police stations on the home screen,
+      each with Directions (always) and Call (only when OSM lists a phone). The
+      generic pipeline now fetches `amenity=police` (new `safety` category) so ANY
+      city gets them; the Melbourne pack was rebuilt (114 stations, 46 with phones).
+      Grounded like everything else: every station is a real retrieved row.
+    - Remaining: download-a-city flow + background refresh, shopping spots,
+      annual festivals.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs

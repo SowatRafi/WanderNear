@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -134,6 +135,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val listState = rememberLazyListState()
     // The active city's facts (name, country, population) for the City Info card.
     var cityInfo by remember { mutableStateOf<CityInfo?>(null) }
+    // Nearest police stations for the Safety card (grounded rows, never invented).
+    var nearbyPolice by remember { mutableStateOf<List<Place>>(emptyList()) }
 
     // --- Voice input (offline, Vosk) ---
     // Idle → Preparing (loading the model) → Listening (actually capturing).
@@ -313,9 +316,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         }
     }
 
-    // Load the city facts once, off the main thread.
+    // Load the city facts + nearest police once, off the main thread. Origin is
+    // the real fix if we already have location permission, else the city centre
+    // (same fallback the search uses) — so the Safety card works before any search.
     LaunchedEffect(Unit) {
         cityInfo = withContext(Dispatchers.IO) { db.cityInfo() }
+        nearbyPolice = withContext(Dispatchers.IO) {
+            db.nearbyPolice(LocationProvider.lastKnown(context) ?: MELBOURNE_CBD)
+        }
     }
 
     // Keep the newest message in view.
@@ -336,7 +344,10 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
             EmptyState(
                 onExample = ::ask,
                 city = cityInfo,
+                police = nearbyPolice,
                 onCallEmergency = { openDialer(context, it) },
+                onCallStation = { openDialer(context, it) },
+                onDirections = { openDirections(context, it) },
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -379,7 +390,10 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 private fun EmptyState(
     onExample: (String) -> Unit,
     city: CityInfo?,
+    police: List<Place>,
     onCallEmergency: (String) -> Unit,
+    onCallStation: (String) -> Unit,
+    onDirections: (Place) -> Unit,
     modifier: Modifier,
 ) {
     Column(
@@ -391,6 +405,12 @@ private fun EmptyState(
         // for the local emergency number.
         city?.let {
             CityInfoCard(it, onCallEmergency)
+            Spacer(Modifier.height(24.dp))
+        }
+        // Grounded safety help: the nearest police stations. Hidden entirely when
+        // the pack has none, so we never show an empty section.
+        if (police.isNotEmpty()) {
+            SafetyCard(police, onDirections, onCallStation)
             Spacer(Modifier.height(24.dp))
         }
         Text("WanderNear", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -429,6 +449,44 @@ private fun CityInfoCard(city: CityInfo, onCallEmergency: (String) -> Unit) {
                 // Opens the dialer pre-filled — the user still taps call themselves.
                 TextButton(onClick = { onCallEmergency(it.emergency) }, contentPadding = PaddingValues(0.dp)) {
                     Text("Call emergency (${it.emergency})")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The Safety card: the nearest police stations from the pack, each with a
+ * Directions button (always) and a Call button (only when the station lists a
+ * phone number — never a dead button). Every row is a real retrieved place, so
+ * we never invent a station, address, or number.
+ */
+@Composable
+private fun SafetyCard(
+    police: List<Place>,
+    onDirections: (Place) -> Unit,
+    onCallStation: (String) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Nearest police", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            police.forEachIndexed { index, station ->
+                if (index > 0) Spacer(Modifier.height(12.dp))
+                Text(station.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                station.distanceKm?.let {
+                    Text(
+                        "%.1f km away".format(it),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onDirections(station) }) { Text("Directions") }
+                    // Only offered when OSM has a number for this station.
+                    station.phone?.let { phone ->
+                        TextButton(onClick = { onCallStation(phone) }) { Text("Call") }
+                    }
                 }
             }
         }
