@@ -127,7 +127,9 @@ private data class ChatMessage(
 fun ChatScreen(prefsRepo: PreferencesRepository) {
     val context = LocalContext.current
     val prefs by prefsRepo.preferences.collectAsState(initial = UserPreferences())
-    val db = remember { CityDatabase(context) }
+    // The active city pack — re-open the data whenever it changes (a download or reset).
+    val activePack by prefsRepo.activePack.collectAsState(initial = CityDatabase.BUNDLED_PACK)
+    val db = remember(activePack) { CityDatabase(context, activePack) }
     val journalDao = remember { JournalDatabase.get(context).journalDao() }
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var input by remember { mutableStateOf("") }
@@ -136,9 +138,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     // The active city's facts (name, country, population) for the City Info card.
-    var cityInfo by remember { mutableStateOf<CityInfo?>(null) }
+    var cityInfo by remember(activePack) { mutableStateOf<CityInfo?>(null) }
     // Nearest police stations for the Safety card (grounded rows, never invented).
-    var nearbyPolice by remember { mutableStateOf<List<Place>>(emptyList()) }
+    var nearbyPolice by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    // The active city's centre — the "near me" fallback when we have no GPS fix.
+    var cityCenter by remember(activePack) { mutableStateOf<LatLng?>(null) }
 
     // --- Voice input (offline, Vosk) ---
     // Idle → Preparing (loading the model) → Listening (actually capturing).
@@ -244,7 +248,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         scope.launch {
             val answer = withContext(Dispatchers.IO) {
                 val here = LocationProvider.lastKnown(context)   // null ⇒ no permission/fix
-                val origin = here ?: MELBOURNE_CBD
+                val origin = here ?: cityCenter ?: MELBOURNE_CBD
                 val spec = QueryParser.parse(question, prefs)
                 val places = db.search(spec, origin)
 
@@ -263,7 +267,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                         // Use the AI reply only if it isn't empty AND names only
                         // places we actually retrieved; otherwise fall back to the
                         // template. This is the enforced never-hallucinate guardrail.
-                        aiText?.takeIf { it.isNotBlank() && GroundingCheck.isGrounded(it, places) }
+                        aiText?.takeIf { it.isNotBlank() && GroundingCheck.isGrounded(it, places, cityInfo?.name) }
                             ?: Recommender.reply(spec, places, nearYou = here != null)
                     } else {
                         Recommender.reply(spec, places, nearYou = here != null)
@@ -318,13 +322,15 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         }
     }
 
-    // Load the city facts + nearest police once, off the main thread. Origin is
-    // the real fix if we already have location permission, else the city centre
-    // (same fallback the search uses) — so the Safety card works before any search.
-    LaunchedEffect(Unit) {
+    // Load the active city's facts + centre + nearest police, off the main thread,
+    // and RELOAD whenever the active pack changes (a download or reset). Origin for
+    // the Safety card is the real fix if we have permission, else the city centre.
+    LaunchedEffect(activePack) {
+        val center = withContext(Dispatchers.IO) { db.cityCenter() }
+        cityCenter = center
         cityInfo = withContext(Dispatchers.IO) { db.cityInfo() }
         nearbyPolice = withContext(Dispatchers.IO) {
-            db.nearbyPolice(LocationProvider.lastKnown(context) ?: MELBOURNE_CBD)
+            db.nearbyPolice(LocationProvider.lastKnown(context) ?: center ?: MELBOURNE_CBD)
         }
     }
 

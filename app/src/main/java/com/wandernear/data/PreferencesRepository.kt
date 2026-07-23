@@ -26,6 +26,21 @@ class PreferencesRepository(private val context: Context) {
         val TRAVEL_STYLE = stringPreferencesKey("travel_style")
         val USE_AI = booleanPreferencesKey("use_ai")
         val TRAVEL_MODE_ON = booleanPreferencesKey("travel_mode_on")
+        val ACTIVE_PACK = stringPreferencesKey("active_pack")
+    }
+
+    /**
+     * Which city pack is active (a path relative to filesDir). It's app state rather
+     * than a taste preference, so it lives outside [UserPreferences]; the UI observes
+     * it and re-opens the data when it changes. Defaults to the bundled city.
+     */
+    val activePack: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.ACTIVE_PACK] ?: CityDatabase.BUNDLED_PACK
+    }
+
+    /** Switch the active city to [name] (e.g. after a download). */
+    suspend fun setActivePack(name: String) {
+        context.dataStore.edit { it[Keys.ACTIVE_PACK] = name }
     }
 
     /** Emits the current preferences now, and again after every change. */

@@ -19,24 +19,34 @@ import java.io.File
  * pack is read-only and already has the full-text search index we built in the
  * data pipeline. This is the single source of truth — the app never invents data.
  */
-class CityDatabase(private val context: Context) {
+class CityDatabase(
+    private val context: Context,
+    // Which pack to read, as a path relative to filesDir. Defaults to the bundled
+    // city; a downloaded pack is e.g. "packs/geelong_2456176.db".
+    private val packName: String = BUNDLED_PACK,
+) {
 
     private fun open(): SQLiteDatabase {
-        val dbFile = File(context.filesDir, DB_NAME)
-        if (!dbFile.exists()) {
-            // Serialize the first-run copy across ALL instances (chat + Travel Mode)
-            // and publish it atomically (write a temp file, then rename), so a
-            // concurrent open can never see a half-written pack — a partial copy
-            // would corrupt our sole source of truth and never be re-copied.
+        // If a downloaded pack was set active but its file is gone (deleted/cleared),
+        // fall back to the bundled city instead of crashing on a missing file.
+        val name =
+            if (packName != BUNDLED_PACK && !File(context.filesDir, packName).exists()) BUNDLED_PACK
+            else packName
+        val dbFile = File(context.filesDir, name)
+        // Only the BUNDLED pack is seeded from assets; downloaded packs already live
+        // in filesDir/packs/. This is what lets us open ANY active city, not just
+        // Melbourne. Seeds atomically (temp file, then rename) across all instances
+        // (chat + Travel Mode) so a concurrent open never sees a half-written pack.
+        if (name == BUNDLED_PACK && !dbFile.exists()) {
             synchronized(COPY_LOCK) {
                 if (!dbFile.exists()) {                       // re-check under the lock
-                    val tmp = File(context.filesDir, "$DB_NAME.tmp")
-                    context.assets.open(DB_NAME).use { input ->
+                    val tmp = File(context.filesDir, "$BUNDLED_PACK.tmp")
+                    context.assets.open(BUNDLED_PACK).use { input ->
                         tmp.outputStream().use { output -> input.copyTo(output) }
                     }
                     if (!tmp.renameTo(dbFile)) {
                         tmp.delete()
-                        throw IllegalStateException("Failed to install $DB_NAME")
+                        throw IllegalStateException("Failed to install $BUNDLED_PACK")
                     }
                 }
             }
@@ -78,6 +88,20 @@ class CityDatabase(private val context: Context) {
                 country = c.getStringOrNull(1),
                 population = if (c.isNull(2)) null else c.getLong(2),
             )
+        }
+    }
+
+    /**
+     * The active city's centre — the sensible "near me" fallback when there's no GPS
+     * fix, for ANY city. We use the CENTROID of the places, not the bounding-box
+     * midpoint: a big/irregular admin boundary (e.g. Greater Melbourne) has a midpoint
+     * far out in the suburbs, whereas the average place location sits where the data
+     * actually is — the city core.
+     */
+    fun cityCenter(): LatLng? = open().use { db ->
+        db.rawQuery("SELECT AVG(lat), AVG(lng) FROM place", null).use { c ->
+            if (!c.moveToFirst() || c.isNull(0) || c.isNull(1)) return@use null
+            LatLng(c.getDouble(0), c.getDouble(1))
         }
     }
 
@@ -189,13 +213,14 @@ class CityDatabase(private val context: Context) {
 
     private fun Cursor.getStringOrNull(i: Int): String? = if (isNull(i)) null else getString(i)
 
-    private companion object {
-        const val DB_NAME = "melbourne.db"
-        val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
+    companion object {
+        /** The bundled pack shipped in assets — the default active city. */
+        const val BUNDLED_PACK = "melbourne.db"
+        private val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
 
         // The place columns every query selects, in the exact order [readPlaces]
         // reads them (index 0..10). Kept in one place so the order can never drift.
-        const val PLACE_COLS = "p.id, p.name, p.category, p.subcategory, p.lat, p.lng, " +
+        private const val PLACE_COLS = "p.id, p.name, p.category, p.subcategory, p.lat, p.lng, " +
             "p.address, p.cuisine, p.religion, p.summary, p.phone"
     }
 }

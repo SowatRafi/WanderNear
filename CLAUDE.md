@@ -153,7 +153,36 @@ never guessed.
       parity with the other categories, covered by a new unit test. Also fixed a
       latent UX bug the tall City-Info/police cards exposed: the empty home screen
       now scrolls, so the example chips are reachable on smaller screens.
-    - Remaining: download-a-city flow + background refresh, annual festivals.
+    - **M6.4** Download-a-city (on-device — the "any city" keystone): with no server,
+      the app itself calls the free OSM/Wikipedia APIs and builds a SQLite pack on the
+      phone (a focused Kotlin port of the Python pipeline; v1 skips Wikipedia enrichment).
+        - **M6.4a** ✅ `core/pack/OsmClassifier` — pure-Kotlin classify + Overpass-query
+          builder; the OSM value lists are a single source of truth (no drift). Unit-tested.
+        - **M6.4b** ✅ `data/CityPackBuilder` — geocode (Nominatim) → Overpass → stream with
+          `android.util.JsonReader` → SQLite pack + FTS in `filesDir/packs/`. No new
+          dependency. Verified on device: built Geelong = 233 real grounded places.
+          Adversarial review → 8 fixes (area-preferring geocode, schema inline-comment
+          split, always-close transaction/connections, blank name/address parity,
+          `.part`+`-journal` cleanup, `Thread.sleep`→cancellation-aware `delay`, OSM-id
+          filename so same-named cities never collide).
+        - **M6.4c** ✅ Multi-city storage + active-city switch — `CityDatabase` opens the
+          ACTIVE pack (bundled Melbourne stays the seeded default); `activePack` lives in
+          DataStore; the whole home screen reactively reloads on switch. **Fixes the
+          copy-once gotcha.** Verified on device (Melbourne↔Geelong). Adversarial review →
+          5 fixes, all leftover Melbourne hard-codes the multi-city switch exposed:
+          pack-local id de-dup cleared on switch, home cards keyed to the pack (no stale
+          window), city centre = place **centroid** not bbox midpoint (~8 km vs ~35 km
+          from CBD), city-agnostic "no results" text, and grounding safe-words now take the
+          active city's name instead of hard-coding Melbourne.
+        - Remaining: **M6.4d** the "Download data for [city]?" search/confirm/progress UI
+          (replaces the temporary dev trigger in Preferences); **M6.4e** silent background
+          refresh (WorkManager) of the active city when online.
+    - **M6.5** Essentials near you (planned — next): add hospital / fuel / parking to the
+      pipeline (named-only, so grounded + manageable) + a "daily needs near you" home card
+      (Directions/Call) and a reverse-geocoded suburb label, so the app shows your actual
+      local area. Grounded from OSM/Wikipedia — deliberately NOT web-scraped (offline + the
+      never-hallucinate rule). Requested after "why does it say Melbourne when I'm in Werribee?"
+    - Remaining: annual festivals.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs

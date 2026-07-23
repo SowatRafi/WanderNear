@@ -62,7 +62,7 @@ class GroundingCheckTest {
     fun honestRefusalText_isGrounded() {
         assertTrue(
             GroundingCheck.isGrounded(
-                "I don't have anything matching that in Melbourne's data yet.",
+                "I don't have anything matching that in this city's data yet.",
                 places,
             ),
         )

@@ -36,7 +36,7 @@ object GroundingCheck {
     private val SAFE_WORDS = setOf(
         "the", "a", "an", "and", "or", "for", "if", "but", "so", "to", "of", "in",
         "on", "at", "is", "are", "you", "your", "i", "we", "it", "this", "these",
-        "melbourne", "cbd", "australia", "victoria",
+        "cbd",   // generic; the ACTIVE city's own name words are added dynamically in isGrounded
         "indian", "italian", "thai", "chinese", "japanese", "korean", "vietnamese",
         "mexican", "greek", "turkish", "lebanese", "french", "spanish", "asian",
         "mediterranean", "middle", "eastern", "western", "modern", "local",
@@ -49,8 +49,12 @@ object GroundingCheck {
     // A capitalized word, optionally followed by more capitalized/number words.
     private val PROPER_NOUN = Regex("""[A-Z][A-Za-z0-9&'’.-]*(?:\s+[A-Z0-9][A-Za-z0-9&'’.-]*)*""")
 
-    fun isGrounded(aiText: String, places: List<Place>): Boolean {
+    fun isGrounded(aiText: String, places: List<Place>, cityName: String? = null): Boolean {
         val names = places.map { normalize(it.name) }.filter { it.isNotBlank() }
+        // The ACTIVE city's own name/region words are safe to see capitalized (works
+        // for any city, e.g. "Geelong", "Victoria") — never flagged as an invented place.
+        val citySafe = cityName?.let { normalize(it).split(' ').filter(String::isNotBlank).toSet() } ?: emptySet()
+        fun safe(word: String) = word in SAFE_WORDS || word in citySafe
 
         for (match in PROPER_NOUN.findAll(aiText)) {
             val phrase = normalize(match.value)
@@ -59,10 +63,10 @@ object GroundingCheck {
             if (names.any { it.contains(phrase) || phrase.contains(it) }) continue
 
             val words = phrase.split(' ').filter { it.isNotBlank() }
-            if (words.all { it in SAFE_WORDS }) continue   // just common capitalized words
+            if (words.all { safe(it) }) continue   // just common / city-name capitalized words
 
             val looksLikeVenue = words.any { it in VENUE_WORDS }
-            val isNovelMultiWord = words.size >= 2 && words.none { it in SAFE_WORDS }
+            val isNovelMultiWord = words.size >= 2 && words.none { safe(it) }
             // A place-looking phrase that matches no retrieved place = invented.
             if (looksLikeVenue || isNovelMultiWord) return false
         }

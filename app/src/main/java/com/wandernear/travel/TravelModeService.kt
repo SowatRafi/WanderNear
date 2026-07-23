@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -40,9 +41,12 @@ import kotlinx.coroutines.launch
 class TravelModeService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val db by lazy { CityDatabase(this) }
     // Places we've already alerted this session, so we don't nag about the same one.
     private val alerted = ConcurrentHashMap.newKeySet<Int>()
+    // Which pack those ids belong to. Place ids are pack-local, so switching cities
+    // must reset the set — otherwise a new city's place could be wrongly suppressed
+    // by a same-numbered id from the old one.
+    @Volatile private var alertedPack: String? = null
     private var locationListener: LocationListener? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -96,6 +100,13 @@ class TravelModeService : Service() {
      *  it's within range, alert the user. Every result is a real retrieved row. */
     private fun checkNearby(here: LatLng) {
         scope.launch {
+            // Read whichever city pack is active (bundled or a downloaded one) each time.
+            val pack = PreferencesRepository(applicationContext).activePack.first()
+            if (pack != alertedPack) {            // switched city → de-dup from scratch
+                alerted.clear()
+                alertedPack = pack
+            }
+            val db = CityDatabase(this@TravelModeService, pack)
             val hit = db.nearbyNotable(here, RADIUS_KM).firstOrNull { it.id !in alerted } ?: return@launch
             if (!alerted.add(hit.id)) return@launch          // another fix just alerted it
             val sub = hit.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Worth a visit"

@@ -12,7 +12,7 @@ import com.wandernear.core.retrieval.SearchSpec
 object Recommender {
 
     const val NO_RESULTS =
-        "I don't have anything matching that in Melbourne's data yet. " +
+        "I don't have anything matching that in this city's data yet. " +
             "Try different words — or I can refresh this city's data in a later version."
 
     /** System instruction for the on-device LLM: reword only, never invent. */
