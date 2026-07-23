@@ -158,16 +158,43 @@ class CityDatabase(
     }
 
     /**
-     * The single nearest place in each of [categories] (e.g. safety/health/fuel/
-     * parking) — the "daily needs near you" card. Every result is a real retrieved
-     * row; a category the pack has nothing for is simply omitted.
+     * The single nearest place in each of [categories] — the "daily needs near you"
+     * and "around you now" cards. Every result is a real retrieved row; a category the
+     * pack has nothing for is simply omitted (we never pad the list).
+     *
+     * [maxKm] null (the default) means "however far it takes": the nearest police
+     * station or hospital is worth pointing at even from 40 km away. Pass a radius for
+     * the things that only make sense close by — a café 30 km off isn't "around you" —
+     * and the query then pre-filters by bounding box instead of measuring every row in
+     * the category, which matters when Travel Mode runs this every couple of minutes.
      */
-    fun nearestEssentials(origin: LatLng, categories: List<String>): List<Place> = open().use { db ->
+    fun nearestEssentials(
+        origin: LatLng,
+        categories: List<String>,
+        maxKm: Double? = null,
+    ): List<Place> = open().use { db ->
+        // Same rough box trick as nearbyNotable — lat/lng aren't indexed.
+        val boxSql: String
+        val boxArgs: Array<String>
+        if (maxKm == null) {
+            boxSql = ""
+            boxArgs = emptyArray()
+        } else {
+            val dLat = maxKm / 111.0
+            val dLng = maxKm / (111.0 * cos(Math.toRadians(origin.lat)).coerceAtLeast(0.01))
+            boxSql = " AND p.lat BETWEEN ? AND ? AND p.lng BETWEEN ? AND ?"
+            boxArgs = arrayOf(
+                (origin.lat - dLat).toString(), (origin.lat + dLat).toString(),
+                (origin.lng - dLng).toString(), (origin.lng + dLng).toString(),
+            )
+        }
         categories.mapNotNull { category ->
-            db.rawQuery("SELECT $PLACE_COLS FROM place p WHERE p.category = ?", arrayOf(category))
+            db.rawQuery("SELECT $PLACE_COLS FROM place p WHERE p.category = ?$boxSql", arrayOf(category) + boxArgs)
                 .use { readPlaces(it) }
                 .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
                 .minByOrNull { it.distanceKm ?: Double.MAX_VALUE }
+                // The box is a square; drop the corners so "within 2 km" really is.
+                ?.takeIf { maxKm == null || (it.distanceKm ?: Double.MAX_VALUE) <= maxKm }
         }
     }
 

@@ -68,7 +68,10 @@ import com.wandernear.core.model.CountryFacts
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.UserPreferences
-import com.wandernear.core.model.haversineKm
+import com.wandernear.core.model.categoryLabel
+import com.wandernear.core.model.distanceLabel
+import com.wandernear.core.model.fixInCity
+import com.wandernear.travel.TravelModeService
 import com.wandernear.core.response.GroundingCheck
 import com.wandernear.core.response.Recommender
 import com.wandernear.core.retrieval.QueryParser
@@ -123,21 +126,8 @@ private val ESSENTIAL_CATEGORIES = listOf("safety", "health", "fuel", "parking")
 private const val LOCALITY_MAX_KM = 25.0
 private const val LOCALITY_FIX_MAX_AGE_MS = 10 * 60 * 1000L   // 10 minutes
 
-// How far from the active city your fix can be before we stop ranking by it. Beyond
-// this you're not in this city at all — you've downloaded somewhere you plan to go —
-// so "near you" is meaningless and we rank from the city centre instead. Generous
-// enough to cover a whole metro area and the towns around it.
-private const val AWAY_FROM_CITY_KM = 100.0
-
-/**
- * Your location, but ONLY when you're actually inside the active city — otherwise null.
- *
- * Download Kyoto while standing in Melbourne and every result is truthfully 8,000 km
- * away, which is useless, and calling them "near you" would be a lie. Returning null
- * makes both callers fall back to the city centre and drop the "near you" wording.
- */
-private fun fixInCity(fix: LatLng?, center: LatLng?): LatLng? =
-    fix?.takeIf { center == null || haversineKm(it, center) <= AWAY_FROM_CITY_KM }
+// `fixInCity` (the "are you actually in this city?" guard) lives in core/ so the
+// Travel Mode service applies exactly the same rule — see core/model/Place.kt.
 
 private enum class Role { User, Assistant }
 // Voice goes through three explicit states so the UI can be honest about what's
@@ -176,6 +166,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // and grounded "worth visiting near you" suggestions — both loaded below.
     var locality by remember(activePack) { mutableStateOf<String?>(null) }
     var notable by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    // "Around you now" comes from the Travel Mode service's own fixes — the screen never
+    // asks for location itself, so Travel Mode stays the one place that watches you.
+    // Empty (and the card hidden) whenever Travel Mode is off. Digests carry the pack
+    // they came from and anything from a different city is dropped: a digest only
+    // refreshes when you move, so after a city switch the old one would otherwise linger
+    // and list another city's places.
+    val aroundState by TravelModeService.around.collectAsState()
+    val around = aroundState?.takeIf { it.packName == activePack }?.places.orEmpty()
 
     // --- Voice input (offline, Vosk) ---
     // Idle → Preparing (loading the model) → Listening (actually capturing).
@@ -395,6 +393,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                 city = cityInfo,
                 locality = locality,
                 essentials = essentials,
+                around = around,
                 notable = notable,
                 onCallEmergency = { openDialer(context, it) },
                 onCall = { openDialer(context, it) },
@@ -444,6 +443,7 @@ private fun EmptyState(
     city: CityInfo?,
     locality: String?,
     essentials: List<Place>,
+    around: List<Place>,
     notable: List<Place>,
     onCallEmergency: (String) -> Unit,
     onCall: (String) -> Unit,
@@ -465,6 +465,14 @@ private fun EmptyState(
             CityInfoCard(it, locality, onCallEmergency)
             Spacer(Modifier.height(24.dp))
         }
+        // Travel Mode only: the nearest food / shopping / outdoors, refreshed from the
+        // service's own location fixes. Sits right under "where you are" because while
+        // you're out walking it's the most useful thing on the screen. Absent whenever
+        // Travel Mode is off or nothing grounded is in range.
+        if (around.isNotEmpty()) {
+            NearbyCard("Around you now", around, onDirections, onCall)
+            Spacer(Modifier.height(24.dp))
+        }
         // Grounded travel suggestions: notable places worth visiting near you. Hidden
         // when the pack has none nearby, so we never show an empty section.
         if (notable.isNotEmpty()) {
@@ -474,7 +482,7 @@ private fun EmptyState(
         // Daily needs near you: nearest police / hospital / fuel / parking. Hidden
         // entirely when the pack has none, so we never show an empty section.
         if (essentials.isNotEmpty()) {
-            EssentialsCard(essentials, onDirections, onCall)
+            NearbyCard("Daily needs near you", essentials, onDirections, onCall)
             Spacer(Modifier.height(24.dp))
         }
         Text("WanderNear", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -509,7 +517,7 @@ private fun NotableCard(places: List<Place>, onDirections: (Place) -> Unit, onSa
                 if (index > 0) Spacer(Modifier.height(14.dp))
                 Text(place.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 val sub = place.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }
-                val dist = place.distanceKm?.let { "%.1f km away".format(it) }
+                val dist = distanceLabel(place.distanceKm)?.let { "$it away" }
                 val meta = listOfNotNull(sub, dist).joinToString(" · ")
                 if (meta.isNotBlank()) {
                     Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -563,39 +571,41 @@ private fun CityInfoCard(city: CityInfo, locality: String?, onCallEmergency: (St
 }
 
 /**
- * The "Daily needs near you" card: the single nearest police station, hospital, fuel
- * station and car park from the pack, each labelled by type, with Directions (always)
- * and Call (only when OSM lists a phone — never a dead button). Every row is a real
- * retrieved place, so we never invent one.
+ * One card listing the nearest place of each kind — used for BOTH "Around you now"
+ * (food/shopping/outdoors while Travel Mode is on) and "Daily needs near you"
+ * (police/hospital/fuel/parking). Sharing it keeps the two looking identical, and
+ * keeps each entry to three tight lines so a screen with several cards stays scannable.
+ *
+ * Every row is a real retrieved place, so we never invent one. Call only appears when
+ * OSM actually lists a number — never a dead button.
  */
 @Composable
-private fun EssentialsCard(
-    essentials: List<Place>,
+private fun NearbyCard(
+    title: String,
+    places: List<Place>,
     onDirections: (Place) -> Unit,
     onCall: (String) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Daily needs near you", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            essentials.forEachIndexed { index, place ->
+            places.forEachIndexed { index, place ->
                 if (index > 0) Spacer(Modifier.height(12.dp))
-                Text(
-                    essentialLabel(place.category),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
                 Text(place.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                place.distanceKm?.let {
-                    Text(
-                        "%.1f km away".format(it),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                // Kind and distance share one line — same shape as the "Worth visiting"
+                // rows, and it saves a line per entry over spelling them out separately.
+                val meta = listOfNotNull(
+                    categoryLabel(place.category),
+                    distanceLabel(place.distanceKm)?.let { "$it away" },
+                ).joinToString(" · ")
+                Text(
+                    meta,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { onDirections(place) }) { Text("Directions") }
-                    // Only offered when OSM has a number for this place.
                     place.phone?.let { phone ->
                         TextButton(onClick = { onCall(phone) }) { Text("Call") }
                     }
@@ -603,15 +613,6 @@ private fun EssentialsCard(
             }
         }
     }
-}
-
-/** A friendly type label for an essentials row, from its category. */
-private fun essentialLabel(category: String): String = when (category) {
-    "safety" -> "Police"
-    "health" -> "Hospital"
-    "fuel" -> "Fuel"
-    "parking" -> "Parking"
-    else -> category.replaceFirstChar { it.uppercase() }
 }
 
 /** One "Label   value" line inside the City Info card. */

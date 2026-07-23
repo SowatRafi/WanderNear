@@ -5,6 +5,7 @@ import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -54,4 +55,54 @@ fun haversineKm(a: LatLng, b: LatLng): Double {
     val h = sin(dLat / 2).pow(2) +
         cos(rad(a.lat)) * cos(rad(b.lat)) * sin(dLng / 2).pow(2)
     return earthRadiusKm * 2 * asin(min(1.0, sqrt(h)))
+}
+
+/**
+ * How far from the active city a location fix can be before we stop treating it as
+ * "you are here". Beyond this you aren't in this city at all — you've downloaded
+ * somewhere you plan to go. Generous enough to cover a whole metro area and the
+ * towns around it.
+ */
+const val AWAY_FROM_CITY_KM = 100.0
+
+/**
+ * [fix], but ONLY when it's actually inside the active city — otherwise null.
+ *
+ * Download Kyoto while standing in Melbourne and every result is truthfully 8,000 km
+ * away: true, useless, and calling it "near you" would be a lie. Returning null lets
+ * every caller fall back to the city centre and drop the "near you" wording, so the
+ * guard lives in one place instead of being re-derived by each screen.
+ */
+fun fixInCity(fix: LatLng?, center: LatLng?): LatLng? =
+    fix?.takeIf { center == null || haversineKm(it, center) <= AWAY_FROM_CITY_KM }
+
+/**
+ * How far away, written the way someone on foot reads it: metres up close, kilometres
+ * once it's a drive. Null distance in, null out (we never guess a distance).
+ *
+ * Rounded to the nearest 10 m because a phone's fix isn't accurate to the metre — "430 m"
+ * is honest where "431 m" would claim precision we don't have.
+ */
+fun distanceLabel(km: Double?): String? = when {
+    km == null -> null
+    km < 1.0 -> "${(km * 100).roundToInt() * 10} m"
+    else -> "%.1f km".format(km)
+}
+
+/**
+ * A friendly label for a place's category, shown on the "around you now" / "daily needs"
+ * rows and in the Travel Mode banner. One mapping in one place, so the app can never
+ * call the same category two different things on two different screens.
+ */
+fun categoryLabel(category: String): String = when (category) {
+    "safety" -> "Police"
+    "health" -> "Hospital"
+    "fuel" -> "Fuel"
+    "parking" -> "Parking"
+    "food" -> "Food"
+    "shopping" -> "Shopping"
+    "outdoor" -> "Outdoors"
+    "worship" -> "Place of worship"
+    "attraction" -> "Attraction"
+    else -> category.replaceFirstChar { it.uppercase() }
 }
