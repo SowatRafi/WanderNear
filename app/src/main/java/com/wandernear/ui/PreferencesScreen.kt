@@ -79,6 +79,9 @@ fun PreferencesScreen(repo: PreferencesRepository) {
 
         Spacer(Modifier.height(24.dp))
         AiSettingsSection(repo)
+
+        Spacer(Modifier.height(24.dp))
+        TravelModeSection(repo)
     }
 }
 

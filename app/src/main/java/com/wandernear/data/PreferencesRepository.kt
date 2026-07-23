@@ -25,6 +25,7 @@ class PreferencesRepository(private val context: Context) {
         val INTERESTS = stringSetPreferencesKey("interests")
         val TRAVEL_STYLE = stringPreferencesKey("travel_style")
         val USE_AI = booleanPreferencesKey("use_ai")
+        val TRAVEL_MODE_ON = booleanPreferencesKey("travel_mode_on")
     }
 
     /** Emits the current preferences now, and again after every change. */
@@ -34,6 +35,7 @@ class PreferencesRepository(private val context: Context) {
             interests = prefs[Keys.INTERESTS] ?: emptySet(),
             travelStyle = prefs[Keys.TRAVEL_STYLE],
             useAi = prefs[Keys.USE_AI] ?: false,
+            travelModeOn = prefs[Keys.TRAVEL_MODE_ON] ?: false,
         )
     }
 
@@ -53,5 +55,9 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setUseAi(value: Boolean) {
         context.dataStore.edit { it[Keys.USE_AI] = value }
+    }
+
+    suspend fun setTravelMode(value: Boolean) {
+        context.dataStore.edit { it[Keys.TRAVEL_MODE_ON] = value }
     }
 }

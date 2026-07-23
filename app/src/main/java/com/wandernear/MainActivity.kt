@@ -26,12 +26,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.wandernear.data.PreferencesRepository
 import com.wandernear.reminders.JournalReminders
+import com.wandernear.travel.TravelModeService
 import com.wandernear.ui.ChatScreen
 import com.wandernear.ui.MyTripsScreen
 import com.wandernear.ui.PreferencesScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** The two tabs in the bottom navigation bar. */
@@ -47,6 +50,14 @@ class MainActivity : ComponentActivity() {
         // applicationContext keeps the single app-wide DataStore instance.
         val prefsRepo = PreferencesRepository(applicationContext)
         JournalReminders.scheduleDaily(this)   // background daily anniversary check
+        // If the switch says Travel Mode is on but no service is actually running
+        // (the process was killed, or the phone rebooted), correct it back to off
+        // so Preferences never claims it's active when it isn't.
+        lifecycleScope.launch {
+            if (prefsRepo.preferences.first().travelModeOn && !TravelModeService.isRunning) {
+                prefsRepo.setTravelMode(false)
+            }
+        }
         setContent {
             MaterialTheme {
                 ReminderBootstrap()            // ask once, then run the on-open checks

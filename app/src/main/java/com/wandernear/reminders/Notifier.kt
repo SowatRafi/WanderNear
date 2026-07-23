@@ -20,6 +20,9 @@ object Notifier {
 
     private const val CHANNEL_ID = "journal_reminders"
 
+    /** Quiet channel for Travel Mode's ongoing banner + nearby-spot alerts. */
+    const val TRAVEL_CHANNEL_ID = "travel_mode"
+
     fun notify(context: Context, id: Int, title: String, text: String) {
         if (!canPost(context)) return
         createChannel(context)
@@ -40,6 +43,17 @@ object Notifier {
                 CHANNEL_ID,
                 "Journal reminders",
                 NotificationManager.IMPORTANCE_DEFAULT,
+            )
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+    }
+
+    /** Creates the quiet Travel Mode channel (low importance so the ongoing banner
+     *  doesn't buzz). Safe to call repeatedly. */
+    fun createTravelChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                TRAVEL_CHANNEL_ID, "Travel Mode", NotificationManager.IMPORTANCE_LOW,
             )
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
