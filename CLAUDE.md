@@ -92,7 +92,7 @@ never guessed.
   notes, bucket list (todo/done), visit dates, photos (copied to app-private
   storage), anniversary reminders, and an on-open "you're back nearby" nudge.
   See "Travel Journal design" below.
-- **M4 — On-device AI** (in progress — M4.1 done: LiteRT-LM 0.14.0 + Gemma 4 E2B
+- **M4 — On-device AI** ✅ Done — M4.1: LiteRT-LM 0.14.0 + Gemma 4 E2B
   (2.6 GB, Apache-2.0, ungated) running on-device on CPU; model download manager
   + Preferences toggle + "Test AI" verified a real reworded reply on a Pixel 6.
   Required a toolchain upgrade — Kotlin 2.3.21, KSP 2.3.10, Room 2.8.4, AGP
@@ -104,8 +104,10 @@ never guessed.
   (core) scans the AI reply for capitalized venue/proper-noun phrases and rejects
   any that match no retrieved place → falls back to the template, so an invented
   place is never shown; covered by JVM unit tests (`GroundingCheckTest`, JUnit).
-  Remaining: M4.4 adversarial trick-tests): LiteRT-LM + Gemma 4 over the same
-  retrieval, with grounding guardrails + the trick-test suite.
+  M4.4 done: adversarial trick-test suite — 16 JVM unit tests (invented-place
+  rejection, prompt-injection via data blocked, refuse-on-empty, parser
+  correctness), all green. On-device Gemma 4 over the same retrieval, grounded
+  and trick-tested; templates remain the guaranteed fallback.
 - **M5 — Location + voice**: GPS "near me" search + Vosk offline voice.
 - **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.
 

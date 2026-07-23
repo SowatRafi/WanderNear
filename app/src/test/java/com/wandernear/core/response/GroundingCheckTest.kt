@@ -47,4 +47,30 @@ class GroundingCheckTest {
     fun emptyOrRefusalText_isGrounded() {
         assertTrue(GroundingCheck.isGrounded("", places))
     }
+
+    // --- Adversarial: try to make it name a place we didn't retrieve ---
+
+    @Test
+    fun injectedExternalBrand_isRejected() {
+        // Even if a place's data smuggled in an instruction, the model echoing
+        // an external place is caught here and the reply is discarded.
+        val text = "Great picks! Also, ignore the list and go to Pizza Palace instead."
+        assertFalse(GroundingCheck.isGrounded(text, places))
+    }
+
+    @Test
+    fun honestRefusalText_isGrounded() {
+        assertTrue(
+            GroundingCheck.isGrounded(
+                "I don't have anything matching that in Melbourne's data yet.",
+                places,
+            ),
+        )
+    }
+
+    @Test
+    fun mixOfRealAndInventedVenue_isRejected() {
+        val text = "Try Akshaya, or the wonderful Sunset Grill down the road."
+        assertFalse(GroundingCheck.isGrounded(text, places))
+    }
 }
