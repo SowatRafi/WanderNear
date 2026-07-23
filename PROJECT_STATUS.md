@@ -16,11 +16,11 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M5 + Travel Mode + M6.1–M6.3 + M6.4a–c done ✅ (32 commits, all pushed; latest `06b5b8a`)
+## Status: M1–M5 + Travel Mode + M6.1–M6.3, M6.4a–c, M6.5 done ✅ (34 commits, all pushed; latest `08fc72e`)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
-| **M1** Data pipeline | ✅ | Python (`pipeline/`) builds `melbourne.db` from OSM Overpass + Wikipedia. Now **20,693 places** (incl. 480 shopping, 114 police) + FTS. |
+| **M1** Data pipeline | ✅ | Python (`pipeline/`) builds `melbourne.db` from OSM Overpass + Wikipedia. Now **22,624 places** (incl. 148 hospital, 917 parking, 868 fuel, 480 shopping, 114 police; 3,858 with a suburb) + FTS. |
 | **M2** App + templates + GPS | ✅ | Compose chat + preferences; loads the DB; grounded **templated** recommendations; one-shot GPS "near me" (falls back to CBD); Directions (`geo:` intent) + attribution; honest refusal on no match. **MVP success test passes offline.** |
 | **M3** Travel Journal | ✅ | Private "My Trips" (separate Room `journal.db`): save places, notes, bucket list (todo/done), visit dates, photos (Photo Picker → app-private storage), anniversary reminders (WorkManager) + on-open "you're back nearby" nudge. Edit/delete everywhere with confirm. |
 | **M4** On-device AI | ✅ | **LiteRT-LM 0.14.0 + Gemma 4 E2B** rewords the retrieved rows into warm prose (opt-in, temperature 0). 5-layer anti-hallucination + `GroundingCheck` validator + **16-test** adversarial suite. Template stays the guaranteed fallback. |
@@ -103,7 +103,7 @@ adb shell am start -n com.wandernear/.MainActivity
 - **LiteRT-LM ships Kotlin 2.3 metadata** — that forced the whole toolchain up (Kotlin 2.3.21, KSP 2.3.10, Room 2.8.4, AGP 8.10.1, Compose 2026) and `minSdk 31`.
 - **Run one shell** (PowerShell) for builds; don't mix with Git Bash `./gradlew`.
 - Pixel 6 (Tensor G1, 2021): first LLM load ~50 s, then ~8–18 tok/s. Voice model is small — best for short, clear phrases.
-- **Bundled pack is copied assets→`filesDir` ONCE** (`CityDatabase.open()` only copies `if (!dbFile.exists())`). So shipping a NEW `melbourne.db` (e.g. M6.2 added police) does **not** reach an existing install via `adb install -r` — the old DB persists in `filesDir`. To see a new pack: `adb shell pm clear com.wandernear` (or uninstall). The future M6 refresh flow must version the pack and re-copy when the bundled one is newer. **Tip:** `pm clear` also wipes the 2.6 GB side-loaded LLM (`files/models/`); to load a new pack WITHOUT re-downloading it, instead run `adb shell run-as com.wandernear rm -f files/melbourne.db` and relaunch — the app re-copies the fresh pack and the model survives. (Used this for the M6.3 rebuild.)
+- **Bundled-pack "copy-once" — FIXED in M6.5.** The pack used to be copied assets→`filesDir` only when absent, so a rebuilt `melbourne.db` never reached an existing install (and after M6.5 added a `suburb` column, an old pack would have *crashed* the home screen). `CityDatabase` now writes a `melbourne.db.version` marker and re-installs the pack whenever `BUNDLED_PACK_VERSION` differs. ⚠️ **Bump `CityDatabase.BUNDLED_PACK_VERSION` every time you rebuild the bundled pack**, or the new one won't ship to existing installs. (`nearestSuburb` also degrades to null on an older pack instead of throwing.) Manual override if ever needed: `adb shell run-as com.wandernear rm -f files/melbourne.db` then relaunch — unlike `pm clear`, this does NOT wipe the side-loaded 2.6 GB LLM in `files/models/`.
 
 ## Conventions (from CLAUDE.md)
 
@@ -115,7 +115,7 @@ adb shell am start -n com.wandernear/.MainActivity
 ## Verify it's all there (fresh session)
 
 ```powershell
-git log --oneline        # 32 commits, latest = 06b5b8a (M6.4c active-city switch)
+git log --oneline        # 34 commits, latest = 08fc72e (M6.5 traveller home)
 git status               # clean
 ```
 
