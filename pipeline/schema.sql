@@ -13,6 +13,7 @@ CREATE TABLE city (
     id           INTEGER PRIMARY KEY,
     name         TEXT NOT NULL,
     country      TEXT,
+    population   INTEGER,        -- from OSM/Wikidata; NULL when unknown (never guessed)
     osm_type     TEXT,          -- relation / way / node used to define the area
     osm_id       INTEGER,
     min_lat      REAL,          -- bounding box of the city (for "any city" later)

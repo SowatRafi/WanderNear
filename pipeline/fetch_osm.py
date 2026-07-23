@@ -20,8 +20,14 @@ import config
 
 
 def geocode(city):
-    """Look up a city name and return its OpenStreetMap record."""
-    params = {"q": city, "format": "json", "limit": 1}
+    """Look up a city name and return its OpenStreetMap record.
+
+    We ask for `addressdetails` (to learn the country) and `extratags` (which
+    often carries the population and the city's Wikidata id) so the same single
+    lookup gives us both the map area AND the city facts M6 shows.
+    """
+    params = {"q": city, "format": "json", "limit": 1,
+              "addressdetails": 1, "extratags": 1}
     headers = {"User-Agent": config.USER_AGENT}
     resp = requests.get(config.NOMINATIM_URL, params=params, headers=headers, timeout=60)
     resp.raise_for_status()
@@ -29,6 +35,46 @@ def geocode(city):
     if not results:
         raise SystemExit(f"Could not find a place called: {city}")
     return results[0]
+
+
+def city_facts(place):
+    """Pull the country and (best-effort) population from a geocode result.
+
+    Both may be None — we never guess. Population comes from OSM's own tag when
+    present, otherwise from the city's linked Wikidata item (property P1082).
+    """
+    country = (place.get("address") or {}).get("country")
+    return country, _population(place)
+
+
+def _population(place):
+    extra = place.get("extratags") or {}
+    raw = extra.get("population")
+    if raw:
+        try:
+            return int(str(raw).replace(",", "").split(".")[0])
+        except ValueError:
+            pass
+    qid = extra.get("wikidata")
+    return _population_from_wikidata(qid) if qid else None
+
+
+def _population_from_wikidata(qid):
+    """Read population (P1082) from a Wikidata item; None if unavailable."""
+    url = f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
+    try:
+        resp = requests.get(url, headers={"User-Agent": config.USER_AGENT}, timeout=60)
+        if resp.status_code != 200:
+            return None
+        claims = resp.json()["entities"][qid].get("claims", {}).get("P1082", [])
+        preferred = next((c for c in claims if c.get("rank") == "preferred"), None)
+        chosen = preferred or (claims[0] if claims else None)
+        if chosen:
+            amount = chosen["mainsnak"]["datavalue"]["value"]["amount"]  # e.g. "+5350705"
+            return int(float(amount))
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return None
+    return None
 
 
 def area_id_for(osm_type, osm_id):
@@ -102,6 +148,8 @@ def main():
     place = geocode(config.CITY)
     osm_type, osm_id = place["osm_type"], place["osm_id"]
     print(f"  found: {place['display_name']}  ({osm_type} {osm_id})")
+    country, population = city_facts(place)
+    print(f"  country={country}  population={population}")
 
     area_id = area_id_for(osm_type, osm_id)
     if area_id is None:
@@ -121,6 +169,8 @@ def main():
     out = {
         "city": {
             "name": config.CITY,
+            "country": country,
+            "population": population,
             "osm_type": osm_type,
             "osm_id": int(osm_id),
             "min_lat": south,

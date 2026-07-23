@@ -63,6 +63,20 @@ def address(tags):
     return ", ".join(parts) if parts else None
 
 
+def city_facts_for_build(city_meta):
+    """Country + population for the city row. Use whatever stage 1 already
+    captured; for an older cache that predates those fields, geocode once as a
+    best-effort fallback. Never guesses — returns None when unknown."""
+    if "country" in city_meta or "population" in city_meta:
+        return city_meta.get("country"), city_meta.get("population")
+    try:
+        import fetch_osm
+        return fetch_osm.city_facts(fetch_osm.geocode(config.CITY))
+    except Exception as err:                      # offline / API down → build anyway
+        print(f"  (couldn't fetch city facts: {err}; leaving country/population blank)")
+        return None, None
+
+
 def main():
     with open(config.OSM_JSON, encoding="utf-8") as fh:
         raw = json.load(fh)
@@ -82,12 +96,14 @@ def main():
     with open(os.path.join(os.path.dirname(__file__), "schema.sql"), encoding="utf-8") as fh:
         conn.executescript(fh.read())
 
-    # Insert the single city row.
+    # Insert the single city row. Country + population come from the geocode
+    # (real values, never guessed); either may be NULL if the source lacks them.
+    country, population = city_facts_for_build(city_meta)
     conn.execute(
-        """INSERT INTO city (id, name, country, osm_type, osm_id,
+        """INSERT INTO city (id, name, country, population, osm_type, osm_id,
                min_lat, min_lng, max_lat, max_lng, data_version, fetched_at, attribution)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (city_meta["name"], "Australia", city_meta["osm_type"], city_meta["osm_id"],
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (city_meta["name"], country, population, city_meta["osm_type"], city_meta["osm_id"],
          city_meta["min_lat"], city_meta["min_lng"], city_meta["max_lat"],
          city_meta["max_lng"], date.today().isoformat(),
          datetime.now(timezone.utc).isoformat(), config.ATTRIBUTION),
