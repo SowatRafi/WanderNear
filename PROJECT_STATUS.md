@@ -33,7 +33,7 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 | **M6.5** Traveller home | ✅ | Home shows your **ACTUAL suburb** (on-device `nearestSuburb` from a new `place.suburb` column, 25 km guard — **no GPS leaves the phone**), a grounded **"Worth visiting nearby"** card, and a **"Daily needs near you"** card (nearest police/hospital/fuel/parking via new `health`/`fuel`/`parking` categories in BOTH the pipeline and the on-device builder). Melbourne rebuilt (22,624 places). A review caught + fixed a GPS-egress (Nominatim reverse-geocode) that violated non-negotiable #1 → reworked fully on-device. Verified on device. |
 
 ### Remaining
-- **M6.4 (rest)** — **M6.4d** the "Download data for [city]?" search/confirm/progress UI (replaces the temporary dev trigger in Preferences), and **M6.4e** silent background refresh (WorkManager) of the active city when online. (M6.4a–c done; the copy-once gotcha is already fixed by M6.4c's active-pack storage.)
+- **M6.4 (rest)** — **M6.4d** the "Download data for [city]?" search/confirm/progress UI (replaces the temporary dev trigger in Preferences), and **M6.4e** silent background refresh (WorkManager) of the active city when online. (M6.4a–c done. The temporary dev trigger in Preferences — `TempPackBuilderSection` — must be DELETED when M6.4d ships the real UI.)
 - **M6 (rest)** — annual festivals. (Dropped as not free/offline/groundable or unsafe to auto-trigger: live events, "current leaders", voice-command auto-calling.)
 - **M7** — Travel Journal v2: voice + video memos, and a smarter "you forgot this" bucket-list nudge when you return near a saved place.
 
@@ -52,20 +52,30 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 
 ```
 pipeline/                     Python data pipeline (run on PC): fetch_osm.py → enrich_wikipedia.py → build_db.py → query_demo.py
+                              schema.sql = the pack schema (single source; copied to app assets)
 app/src/main/
-  assets/melbourne.db         bundled city data pack (4.5 MB, 20,206 places)
-  resources/vosk-...zip        bundled voice model (40 MB, Java resource)
+  assets/melbourne.db         bundled city data pack (4.9 MB, 22,624 places)
+  assets/schema.sql           same schema, used by the ON-DEVICE pack builder
+  resources/vosk-...zip       bundled voice model (40 MB, Java resource)
   java/com/wandernear/
-    core/        PURE Kotlin, no Android imports (model, retrieval, response) — portable
-    data/        CityDatabase (read-only pack), PreferencesRepository, LocationProvider, journal/ (Room)
+    core/        PURE Kotlin, no Android imports — portable
+      model/       Place, LatLng, CityInfo, CountryFacts, UserPreferences
+      retrieval/   QueryParser (words → SearchSpec)
+      response/    Recommender (templates + AI prompt), GroundingCheck (anti-hallucination guard)
+      pack/        OsmClassifier — classify + Overpass query, SHARED by pipeline parity + on-device builder
+    data/        CityDatabase (reads the ACTIVE pack; nearestSuburb/nearestEssentials/nearbyNotable),
+                 CityPackBuilder (on-device "download a city"), PreferencesRepository (incl. activePack),
+                 LocationProvider, journal/ (Room)
     ai/          ModelManager (LLM download), LlmEngine (LiteRT-LM wrapper)
     voice/       VoiceRecognizer (Vosk wrapper)
     reminders/   Notifier + JournalReminders (WorkManager)
     travel/      TravelModeService (WHILE-IN-USE location foreground service)
-    ui/          ChatScreen, PreferencesScreen, MyTripsScreen, AiSettingsSection, TravelModeSection
-  test/          JVM unit tests (GroundingCheckTest, QueryParserTest, RecommenderTest)
+    ui/          ChatScreen (traveller home + chat), PreferencesScreen, MyTripsScreen,
+                 AiSettingsSection, TravelModeSection
+  test/          JVM unit tests (GroundingCheckTest, QueryParserTest, RecommenderTest, OsmClassifierTest)
 CLAUDE.md                     conventions, decisions, milestone log
 PROJECT_STATUS.md             this file
+NEXT_SESSION_PROMPT.md        copy-paste starter prompt for a fresh session
 ```
 
 ## How to build & run
@@ -104,6 +114,14 @@ adb shell am start -n com.wandernear/.MainActivity
 - **Run one shell** (PowerShell) for builds; don't mix with Git Bash `./gradlew`.
 - Pixel 6 (Tensor G1, 2021): first LLM load ~50 s, then ~8–18 tok/s. Voice model is small — best for short, clear phrases.
 - **Bundled-pack "copy-once" — FIXED in M6.5.** The pack used to be copied assets→`filesDir` only when absent, so a rebuilt `melbourne.db` never reached an existing install (and after M6.5 added a `suburb` column, an old pack would have *crashed* the home screen). `CityDatabase` now writes a `melbourne.db.version` marker and re-installs the pack whenever `BUNDLED_PACK_VERSION` differs. ⚠️ **Bump `CityDatabase.BUNDLED_PACK_VERSION` every time you rebuild the bundled pack**, or the new one won't ship to existing installs. (`nearestSuburb` also degrades to null on an older pack instead of throwing.) Manual override if ever needed: `adb shell run-as com.wandernear rm -f files/melbourne.db` then relaunch — unlike `pm clear`, this does NOT wipe the side-loaded 2.6 GB LLM in `files/models/`.
+- 🔒 **PRIVACY RULE (learned the hard way).** NEVER send the user's GPS off the device. "Which suburb am I in" is derived ON-DEVICE from the pack's `place.suburb` (`CityDatabase.nearestSuburb`). An earlier attempt reverse-geocoded the user's exact coordinates via Nominatim — an adversarial review caught it as a direct violation of non-negotiable #1 before it shipped. Sending a user-typed *city name* to geocode a pack is fine; sending their *position* is not.
+- **Kotlin block comments NEST.** A `/*` inside a KDoc — e.g. writing a path like `pipeline/` + `*.py` — opens a nested comment and swallows the rest of the file ("Unclosed comment" at EOF). Avoid `/*` inside comment text.
+- **Nominatim's top hit for a city is often a NODE**, and a node can't scope an Overpass `area(...)` query. Ask for several results and take the first `relation`/`way` — this is what makes "any city" actually work (plain "Geelong" fails otherwise).
+- **`schema.sql` has inline `--` comments containing `;`** — strip inline comments BEFORE splitting on `;`, or SQLite throws `incomplete input (code 1)` when applying the schema on-device.
+- **SQLite leaves a `<db>-journal` sidecar.** When publishing or cleaning up a pack, delete `-journal` / `-wal` / `-shm` alongside the `.db`, or you orphan files.
+- **Overpass rate-limits repeated queries from one IP.** The mirror retry + backoff handles it, but a rebuild can stall for a few minutes — that's throttling, not a hang.
+- **`adb` is not on PATH** — use `C:\Users\sowad\AppData\Local\Android\Sdk\platform-tools\adb.exe`.
+- **A background review that reports "0 confirmed" may be incomplete.** If verify agents fail (e.g. session limit), findings come back with `verdict: null` — check for those and verify them yourself; a HIGH-severity crash was found exactly that way.
 
 ## Conventions (from CLAUDE.md)
 
