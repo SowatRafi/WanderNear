@@ -16,7 +16,7 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M5 + Travel Mode + M6.1–M6.3, M6.4a–c, M6.5 done ✅ (34 commits, all pushed; latest `08fc72e`)
+## Status: M1–M5 + Travel Mode + M6.1–M6.3, M6.4a–d, M6.5 done ✅ (35 commits, all pushed; latest `8a0f505`)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
@@ -30,12 +30,16 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 | **M6.2** Safety section | ✅ | Home-screen **"Nearest police"** card under City Info: 3 nearest police stations, each with Directions (always) + Call (only when OSM lists a phone). Generic pipeline now fetches `amenity=police` (new `safety` category) so ANY city gets them; Melbourne pack rebuilt (114 stations, 46 with phones). Verified on device. |
 | **M6.3** Shopping spots | ✅ | New **`shopping`** retrieval category (markets + malls + department stores) via `amenity=marketplace` + `shop=mall\|department_store`, so ANY city gets them; Melbourne rebuilt (480 rows). **Searchable, no new card:** "shopping"/"markets" ride the existing retrieval→template/AI→cards path (Directions + Save + attribution), grounded to real rows. Also fixed a latent UX bug the tall cards exposed — the empty home screen now scrolls, so example chips are reachable. Verified end-to-end on device. |
 | **M6.4** Download-a-city (a–c) | ✅ | On-device **"any city"**: the app fetches OSM/Wikipedia and builds a SQLite pack on the phone (no server; Kotlin twin of the pipeline; v1 skips enrichment). **a** `core/OsmClassifier` (pure-Kotlin classify + Overpass query, unit-tested); **b** `CityPackBuilder` (geocode→Overpass→`JsonReader`→SQLite+FTS in `filesDir/packs/`; **Geelong = 233 grounded places**; 8 review fixes); **c** multi-city storage + active-city switch (`CityDatabase` opens the active pack; `activePack` in DataStore; whole home reactively reloads; **fixes the copy-once gotcha**; 5 review fixes removing leftover Melbourne hard-codes). Verified Melbourne↔Geelong on device. **Remaining:** M6.4d download-UI, M6.4e background refresh. |
+| **M6.4d** Download-a-city UI | ✅ | The real **"Download data for [city]?"** flow, as a **Cities card in Preferences** (temp dev trigger deleted). Radio list of installed packs (names read from each pack's own `city` row) + search → up to 5 real Nominatim **areas** shown with their full display name → confirm dialog → determinate progress + Cancel → auto-switch. `CityPackBuilder.find()` exposes the matches so `build()` takes a **confirmed** `Match` (no blind first-hit, no double geocode). Two bugs caught on-device: Nominatim replying in the place's own language (fixed with `Accept-Language`), and "near you" ranking from a fix 8,147 km outside the pack (fixed by `fixInCity()` → city-centre fallback). Verified on a Pixel 6 (Kyoto = 10,326 places). |
 | **M6.5** Traveller home | ✅ | Home shows your **ACTUAL suburb** (on-device `nearestSuburb` from a new `place.suburb` column, 25 km guard — **no GPS leaves the phone**), a grounded **"Worth visiting nearby"** card, and a **"Daily needs near you"** card (nearest police/hospital/fuel/parking via new `health`/`fuel`/`parking` categories in BOTH the pipeline and the on-device builder). Melbourne rebuilt (22,624 places). A review caught + fixed a GPS-egress (Nominatim reverse-geocode) that violated non-negotiable #1 → reworked fully on-device. Verified on device. |
 
-### Remaining
-- **M6.4 (rest)** — **M6.4d** the "Download data for [city]?" search/confirm/progress UI (replaces the temporary dev trigger in Preferences), and **M6.4e** silent background refresh (WorkManager) of the active city when online. (M6.4a–c done. The temporary dev trigger in Preferences — `TempPackBuilderSection` — must be DELETED when M6.4d ships the real UI.)
-- **M6 (rest)** — annual festivals. (Dropped as not free/offline/groundable or unsafe to auto-trigger: live events, "current leaders", voice-command auto-calling.)
-- **M7** — Travel Journal v2: voice + video memos, and a smarter "you forgot this" bucket-list nudge when you return near a saved place.
+### Remaining — agreed order (owner, 2026-07-24)
+1. **TM.3 — "Around you now"** (next): while Travel Mode is on, surface food / shopping / fuel / parking / local favourites / worth-visiting near the current fix, from the ACTIVE pack. All those categories already exist in `OsmClassifier`; `TravelModeService` currently only uses `nearbyNotable`, so this is mostly wiring. **Must be a digest** — ONE low-priority notification that updates in place + an in-app card; a buzz per café is unusable. **"Local hotspot" is defined as** has-a-Wikipedia-summary OR `tourism=attraction|viewpoint` OR marketplace/park/bar/pub/café, labelled "Local favourites" — OSM has no popularity data, and claiming "locals love this" would be invented (rule #5).
+2. **M6.6 — Events & festivals**: Wikidata (SPARQL, CC0) annual festivals + Wikipedia REST descriptions → the existing `event` table. Plus **owner-approved exception to non-negotiable #4**: per-city council open data (CKAN/Socrata) via a **JSON data registry** (`city osm_id → portal type, base URL, dataset id, column map`) read by both the pipeline and the on-device builder, so adding a city is a data row not code; licence-gated to CC0/CC-BY. Cities with no entry still get Wikidata festivals + an honest "nothing listed". Rejected: scraping event sites, Eventbrite/Ticketmaster/Meetup (keys/paid/no-caching terms).
+3. **M6.4e** — silent background refresh (WorkManager) of the active city when online. Scoped to the **active pack's area, never the live GPS fix**.
+4. **M7** — Travel Journal v2: voice + video memos, and a smarter "you forgot this" bucket-list nudge when you return near a saved place.
+
+Known gaps, deliberately deferred: no way to DELETE a downloaded pack yet; a download is tied to the Preferences screen (same limit as the AI-model download); downloaded packs have no Wikipedia summaries (v1 skips enrichment), so "Worth visiting nearby" is thinner there than in bundled Melbourne.
 
 ## Tech stack (EXACT pinned versions — don't change casually)
 
@@ -71,7 +75,7 @@ app/src/main/
     reminders/   Notifier + JournalReminders (WorkManager)
     travel/      TravelModeService (WHILE-IN-USE location foreground service)
     ui/          ChatScreen (traveller home + chat), PreferencesScreen, MyTripsScreen,
-                 AiSettingsSection, TravelModeSection
+                 AiSettingsSection, TravelModeSection, CitiesSection (switch/add a city)
   test/          JVM unit tests (GroundingCheckTest, QueryParserTest, RecommenderTest, OsmClassifierTest)
 CLAUDE.md                     conventions, decisions, milestone log
 PROJECT_STATUS.md             this file
@@ -116,6 +120,9 @@ adb shell am start -n com.wandernear/.MainActivity
 - **Bundled-pack "copy-once" — FIXED in M6.5.** The pack used to be copied assets→`filesDir` only when absent, so a rebuilt `melbourne.db` never reached an existing install (and after M6.5 added a `suburb` column, an old pack would have *crashed* the home screen). `CityDatabase` now writes a `melbourne.db.version` marker and re-installs the pack whenever `BUNDLED_PACK_VERSION` differs. ⚠️ **Bump `CityDatabase.BUNDLED_PACK_VERSION` every time you rebuild the bundled pack**, or the new one won't ship to existing installs. (`nearestSuburb` also degrades to null on an older pack instead of throwing.) Manual override if ever needed: `adb shell run-as com.wandernear rm -f files/melbourne.db` then relaunch — unlike `pm clear`, this does NOT wipe the side-loaded 2.6 GB LLM in `files/models/`.
 - 🔒 **PRIVACY RULE (learned the hard way).** NEVER send the user's GPS off the device. "Which suburb am I in" is derived ON-DEVICE from the pack's `place.suburb` (`CityDatabase.nearestSuburb`). An earlier attempt reverse-geocoded the user's exact coordinates via Nominatim — an adversarial review caught it as a direct violation of non-negotiable #1 before it shipped. Sending a user-typed *city name* to geocode a pack is fine; sending their *position* is not.
 - **Kotlin block comments NEST.** A `/*` inside a KDoc — e.g. writing a path like `pipeline/` + `*.py` — opens a nested comment and swallows the rest of the file ("Unclosed comment" at EOF). Avoid `/*` inside comment text.
+- **Nominatim answers in the PLACE's own language.** Searching "Kyoto" returns `京都市`, which we'd store as the city's name and show on every heading. Send an `Accept-Language` header (we use the phone's locale) on any Nominatim request. Overpass is unaffected — place `name` tags stay local (correct: that's what's on the street sign).
+- **"Near you" is a lie once packs can be anywhere.** With a far-away pack active, ranking by the real fix gave "Daily needs near you … 8,147 km away" and an empty "Worth visiting nearby". `ChatScreen.fixInCity()` drops the fix beyond `AWAY_FROM_CITY_KM` (100 km) so both the cards and the chat fall back to the city centre. Add the same guard to anything new that ranks by distance.
+- **PowerShell `>` CORRUPTS binary output.** `adb exec-out screencap -p > x.png` writes a BOM + re-encodes → an unreadable PNG. Use `adb shell screencap -p /sdcard/x.png` then `adb pull`.
 - **Nominatim's top hit for a city is often a NODE**, and a node can't scope an Overpass `area(...)` query. Ask for several results and take the first `relation`/`way` — this is what makes "any city" actually work (plain "Geelong" fails otherwise).
 - **`schema.sql` has inline `--` comments containing `;`** — strip inline comments BEFORE splitting on `;`, or SQLite throws `incomplete input (code 1)` when applying the schema on-device.
 - **SQLite leaves a `<db>-journal` sidecar.** When publishing or cleaning up a pack, delete `-journal` / `-wal` / `-shm` alongside the `.db`, or you orphan files.
@@ -133,7 +140,7 @@ adb shell am start -n com.wandernear/.MainActivity
 ## Verify it's all there (fresh session)
 
 ```powershell
-git log --oneline        # 34 commits, latest = 08fc72e (M6.5 traveller home)
+git log --oneline        # 36 commits, latest = M6.4d docs (code = 8a0f505)
 git status               # clean
 ```
 

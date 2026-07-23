@@ -174,9 +174,25 @@ never guessed.
           window), city centre = place **centroid** not bbox midpoint (~8 km vs ~35 km
           from CBD), city-agnostic "no results" text, and grounding safe-words now take the
           active city's name instead of hard-coding Melbourne.
-        - Remaining: **M6.4d** the "Download data for [city]?" search/confirm/progress UI
-          (replaces the temporary dev trigger in Preferences); **M6.4e** silent background
-          refresh (WorkManager) of the active city when online.
+        - **M6.4d** ✅ The real "Download data for [city]?" UI — a **Cities card in
+          Preferences** (same place as the AI-model download; no new tab). Switch between
+          installed packs via a radio list whose names are read from each pack's own `city`
+          row; or type a city → `CityPackBuilder.find()` returns up to 5 real Nominatim
+          AREAS → tap one → "Download data for X?" dialog → determinate progress with
+          Cancel → auto-switch. The temporary `TempPackBuilderSection` is DELETED.
+          Build v1 took the first geocode hit blindly; now `build()` takes the confirmed
+          `Match`, so "Paris" can't quietly fetch Paris, Texas, and we never geocode twice.
+          Two real bugs found by verifying on-device: (1) Nominatim answers in each place's
+          OWN language — "Kyoto" came back as 京都市 and would have become the stored city
+          name on every heading; fixed with an `Accept-Language` header set from the phone's
+          locale. (2) With a far-away pack active, `fixInCity()` now falls back to the city
+          centre — before it, downloading Kyoto from Melbourne showed "Daily needs near you"
+          **8,147 km away** and an empty "Worth visiting nearby". Verified on a Pixel 6:
+          Kyoto = 10,326 grounded places, switch back to Melbourne still shows the real
+          suburb. Deliberately skipped: deleting packs, and surviving a tab switch mid-
+          download (same screen-scoped limit as the AI model download; marked `ponytail:`).
+        - Remaining: **M6.4e** silent background refresh (WorkManager) of the active city
+          when online.
     - **M6.5** ✅ Traveller home (where-am-I + suggestions + essentials): the home now shows
       your ACTUAL suburb (e.g. "Werribee") derived ON-DEVICE from a new `place.suburb` column
       (the nearest place's addr:suburb, within a 25 km guard) — **no GPS ever leaves the
@@ -188,7 +204,28 @@ never guessed.
       via Nominatim (which leaked the user's GPS off-device — a #1 violation) plus a false
       "suburb in the wrong city" composition; both fixed by going fully on-device with the
       distance guard, off-main-thread location reads, and a fresh-fix requirement for the label.
-    - Remaining: annual festivals.
+    - Remaining: annual festivals (see M6.6 below).
+    - **M6.6 — Events & festivals** (approved 2026-07-24, not started). Free/no-key sources
+      ONLY: **Wikidata** (SPARQL, CC0) for annual/recurring festivals + **Wikipedia REST**
+      (CC BY-SA) for the description, written into the existing `event` table (`when_text`
+      is a human-readable hint, NOT a guaranteed schedule). **Owner-approved exception to
+      non-negotiable #4:** per-city council OPEN DATA feeds (CKAN/Socrata) may also be used,
+      wired through a small **data registry** (a JSON asset mapping `city osm_id → portal
+      type, base URL, dataset id, column map`) read by BOTH the pipeline and the on-device
+      builder — so adding a city is a data row, never code, and a city with no entry still
+      gets Wikidata festivals plus an honest "nothing listed". Licence-gated to CC0/CC-BY,
+      with `summary_url` + `summary_license` stored per event. REJECTED as not free/legal/
+      groundable: scraping event sites, Eventbrite/Ticketmaster/Meetup.
+- **TM.3 — "Around you now"** (approved 2026-07-24, not started): while Travel Mode is on,
+  surface food / shopping / fuel / parking / local favourites / worth-visiting near the
+  current fix from the ACTIVE pack (every category already exists in `OsmClassifier`;
+  `TravelModeService` currently only uses `nearbyNotable`). MUST be a **digest** — one
+  low-priority notification that UPDATES IN PLACE plus an in-app card; a separate buzz per
+  café is unusable. **"Local hotspot" has no groundable popularity source in OSM**, so it is
+  defined as: has a Wikipedia summary, OR `tourism=attraction|viewpoint`, OR marketplace /
+  park / bar / pub / café — labelled "Local favourites", never "locals love this" (that
+  would be invented → rule #5). Any online refresh is scoped to the ACTIVE PACK's area,
+  NEVER the live GPS fix.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs
