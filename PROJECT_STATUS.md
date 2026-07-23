@@ -16,18 +16,22 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M5.2 done ✅ (19 commits, all pushed)
+## Status: M1–M5 + Travel Mode + M6.1/M6.2 done ✅ (25 commits, all pushed; latest `ea0c75a`)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
-| **M1** Data pipeline | ✅ | Python (`pipeline/`) builds `melbourne.db` from OSM Overpass + Wikipedia: **20,092 places** + FTS. |
+| **M1** Data pipeline | ✅ | Python (`pipeline/`) builds `melbourne.db` from OSM Overpass + Wikipedia. Now **20,206 places** (incl. 114 police) + FTS. |
 | **M2** App + templates + GPS | ✅ | Compose chat + preferences; loads the DB; grounded **templated** recommendations; one-shot GPS "near me" (falls back to CBD); Directions (`geo:` intent) + attribution; honest refusal on no match. **MVP success test passes offline.** |
 | **M3** Travel Journal | ✅ | Private "My Trips" (separate Room `journal.db`): save places, notes, bucket list (todo/done), visit dates, photos (Photo Picker → app-private storage), anniversary reminders (WorkManager) + on-open "you're back nearby" nudge. Edit/delete everywhere with confirm. |
 | **M4** On-device AI | ✅ | **LiteRT-LM 0.14.0 + Gemma 4 E2B** rewords the retrieved rows into warm prose (opt-in, temperature 0). 5-layer anti-hallucination + `GroundingCheck` validator + **16-test** adversarial suite. Template stays the guaranteed fallback. |
 | **M5** Voice input | ✅ | **Vosk 0.3.75** offline STT; mic button in chat; transcribe-to-input (review-then-send). **M5.2 polish:** honest Idle→Preparing→Listening states + mic released on phrase (privacy); inline vector mic/stop icons + a listening pulse (no new dep, a11y labels, reduced-motion); graceful mic-permission handling with an "Open Settings" recovery. Verified on device. |
+| **TM** Travel Mode | ✅ | Opt-in Preferences toggle → a WHILE-IN-USE location foreground service with an always-visible "Travel Mode is on" banner (no background location). **TM.1:** toggle + service + banner + Stop; START_NOT_STICKY; MainActivity self-heals a stale switch. **TM.2:** battery-friendly live location watch (~2 min / ~120 m) firing grounded "worth a visit nearby" alerts within 300 m (`CityDatabase.nearbyNotable` — real rows only, de-duped). Banner is the privacy guarantee; refuses to run if its channel is muted. |
+| **M6.1** City Info card | ✅ | Home-screen card: population/currency/emergency number, with a safe Call-emergency dial (`ACTION_DIAL`, never auto-calls). Pipeline captures country + population. |
+| **M6.2** Safety section | ✅ | Home-screen **"Nearest police"** card under City Info: 3 nearest police stations, each with Directions (always) + Call (only when OSM lists a phone). Generic pipeline now fetches `amenity=police` (new `safety` category) so ANY city gets them; Melbourne pack rebuilt (114 stations, 46 with phones). Verified on device. |
 
 ### Remaining
-- **M6** — any city + richer pack: "Download data for [city]?" flow (reuse the M1 pipeline) + silent background refresh; plus City Info (population/currency/emergency number), Safety (police stations), shopping spots, annual festivals, and Call/Directions buttons. (Dropped as not free/offline/groundable or unsafe to auto-trigger: live events, "current leaders", voice-command auto-calling.)
+- **M6 (rest)** — the **"Download data for [city]?" flow** (reuse the M1 pipeline) + silent background refresh; plus shopping spots and annual festivals. (Dropped as not free/offline/groundable or unsafe to auto-trigger: live events, "current leaders", voice-command auto-calling.)
+  - ⚠️ The refresh work must handle updating an *existing* install's pack — see the DB-copy gotcha below.
 - **M7** — Travel Journal v2: voice + video memos, and a smarter "you forgot this" bucket-list nudge when you return near a saved place.
 
 ## Tech stack (EXACT pinned versions — don't change casually)
@@ -46,7 +50,7 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 ```
 pipeline/                     Python data pipeline (run on PC): fetch_osm.py → enrich_wikipedia.py → build_db.py → query_demo.py
 app/src/main/
-  assets/melbourne.db         bundled city data pack (4.3 MB)
+  assets/melbourne.db         bundled city data pack (4.5 MB, 20,206 places)
   resources/vosk-...zip        bundled voice model (40 MB, Java resource)
   java/com/wandernear/
     core/        PURE Kotlin, no Android imports (model, retrieval, response) — portable
@@ -54,7 +58,8 @@ app/src/main/
     ai/          ModelManager (LLM download), LlmEngine (LiteRT-LM wrapper)
     voice/       VoiceRecognizer (Vosk wrapper)
     reminders/   Notifier + JournalReminders (WorkManager)
-    ui/          ChatScreen, PreferencesScreen, MyTripsScreen, AiSettingsSection
+    travel/      TravelModeService (WHILE-IN-USE location foreground service)
+    ui/          ChatScreen, PreferencesScreen, MyTripsScreen, AiSettingsSection, TravelModeSection
   test/          JVM unit tests (GroundingCheckTest, QueryParserTest, RecommenderTest)
 CLAUDE.md                     conventions, decisions, milestone log
 PROJECT_STATUS.md             this file
@@ -95,6 +100,7 @@ adb shell am start -n com.wandernear/.MainActivity
 - **LiteRT-LM ships Kotlin 2.3 metadata** — that forced the whole toolchain up (Kotlin 2.3.21, KSP 2.3.10, Room 2.8.4, AGP 8.10.1, Compose 2026) and `minSdk 31`.
 - **Run one shell** (PowerShell) for builds; don't mix with Git Bash `./gradlew`.
 - Pixel 6 (Tensor G1, 2021): first LLM load ~50 s, then ~8–18 tok/s. Voice model is small — best for short, clear phrases.
+- **Bundled pack is copied assets→`filesDir` ONCE** (`CityDatabase.open()` only copies `if (!dbFile.exists())`). So shipping a NEW `melbourne.db` (e.g. M6.2 added police) does **not** reach an existing install via `adb install -r` — the old DB persists in `filesDir`. To see a new pack: `adb shell pm clear com.wandernear` (or uninstall). The future M6 refresh flow must version the pack and re-copy when the bundled one is newer.
 
 ## Conventions (from CLAUDE.md)
 
@@ -106,6 +112,11 @@ adb shell am start -n com.wandernear/.MainActivity
 ## Verify it's all there (fresh session)
 
 ```powershell
-git log --oneline        # should show 19 commits, latest = the M5.2 docs update
+git log --oneline        # 25 commits, latest = ea0c75a (M6.2 Safety section)
 git status               # clean
 ```
+
+> **Note:** a `ruflo` MCP server may be connected in your session (agent/swarm/memory
+> tooling). It's optional — the app is built with native tools + the `ponytail` and
+> `ui-ux-pro-max` skills. Its scratch dirs (`.claude-flow/`, `.claude/proven-config*`)
+> and `.claude/settings.local.json` are git-ignored.
