@@ -108,7 +108,15 @@ never guessed.
   rejection, prompt-injection via data blocked, refuse-on-empty, parser
   correctness), all green. On-device Gemma 4 over the same retrieval, grounded
   and trick-tested; templates remain the guaranteed fallback.
-- **M5 — Location + voice**: GPS "near me" search + Vosk offline voice.
+- **M5 — Voice input** (in progress — M5.1 done: Vosk 0.3.75 offline STT, mic
+  button in the chat input, RECORD_AUDIO requested in-context, transcribe-to-input
+  with a listening state; GPS "near me" was already done in M2.4). The bundled
+  ~40 MB model lives in `app/src/main/resources/` (Java resources), NOT `assets/`,
+  because AAPT2 crashes linking a large asset; it's unzipped once into filesDir
+  and loaded. Remaining: M5.2 polish (live partials, graceful no-speech/denied).
+  Build gotcha hit here: a corrupted Gradle transforms cache made AAPT2 crash on
+  link even for known-good code — fix is `rm -rf ~/.gradle/caches/<ver>/transforms`
+  then rebuild.
 - **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.
 
 ## Travel Journal design (M3)

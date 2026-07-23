@@ -55,6 +55,8 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     // LiteRT-LM — Google's on-device LLM runtime (runs Gemma 4 E2B).
     implementation(libs.litertlm.android)
+    // Vosk — offline speech-to-text (bundled model, no internet, no hallucination).
+    implementation(libs.vosk.android)
     // JVM unit tests (the AI grounding guardrail + trick-tests).
     testImplementation(libs.junit)
 }

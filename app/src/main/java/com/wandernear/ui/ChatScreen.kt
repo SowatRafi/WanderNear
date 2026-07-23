@@ -1,6 +1,11 @@
 package com.wandernear.ui
 
 import android.Manifest
+import android.content.pm.PackageManager
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.wandernear.voice.VoiceRecognizer
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -100,6 +105,44 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
+    // --- Voice input (offline, Vosk) ---
+    var listening by remember { mutableStateOf(false) }
+
+    fun startVoice() {
+        listening = true
+        input = ""
+        scope.launch {
+            if (!VoiceRecognizer.ensureModel(context)) {
+                listening = false
+                Toast.makeText(context, "Voice model couldn't load", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            VoiceRecognizer.start(
+                onPartial = { input = it },
+                onFinal = { input = it; listening = false },
+                onFail = { listening = false; Toast.makeText(context, it, Toast.LENGTH_SHORT).show() },
+            )
+        }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) startVoice()
+        else Toast.makeText(context, "Microphone permission is needed for voice input", Toast.LENGTH_SHORT).show()
+    }
+
+    fun toggleMic() {
+        if (listening) {
+            VoiceRecognizer.stop()
+            listening = false
+        } else {
+            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+            if (granted) startVoice() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     // Runs the actual search: uses the real location if we have one, else the
     // city centre. Both parse + search happen off the main thread.
     fun runSearch(question: String) {
@@ -162,6 +205,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     fun ask(text: String) {
         val question = text.trim()
         if (question.isEmpty()) return
+        if (listening) { VoiceRecognizer.stop(); listening = false }   // stop the mic on send
         messages += ChatMessage(Role.User, question)
         input = ""
         // On the very first search, request location once so "near me" is real.
@@ -226,7 +270,13 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             textAlign = TextAlign.Center,
         )
-        InputBar(value = input, onValueChange = { input = it }, onSend = { ask(input) })
+        InputBar(
+            value = input,
+            onValueChange = { input = it },
+            onSend = { ask(input) },
+            listening = listening,
+            onMicToggle = { toggleMic() },
+        )
     }
 }
 
@@ -325,17 +375,31 @@ private fun RecommendationCard(card: RecCard, onDirections: (Place) -> Unit, onS
 }
 
 @Composable
-private fun InputBar(value: String, onValueChange: (String) -> Unit, onSend: () -> Unit) {
+private fun InputBar(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSend: () -> Unit,
+    listening: Boolean,
+    onMicToggle: () -> Unit,
+) {
     Surface(tonalElevation = 3.dp) {
         androidx.compose.foundation.layout.Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Mic: tap to speak (offline). Turns into a red stop while listening.
+            IconButton(onClick = onMicToggle) {
+                Text(
+                    if (listening) "■" else "🎤",
+                    fontSize = 20.sp,
+                    color = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Ask for a place…") },
+                placeholder = { Text(if (listening) "Listening…" else "Ask for a place…") },
                 maxLines = 3,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { onSend() }),
