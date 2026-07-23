@@ -31,6 +31,19 @@ data class Place(
 /** A latitude/longitude point. */
 data class LatLng(val lat: Double, val lng: Double)
 
+/**
+ * The one-row summary of the active city pack, shown on the City Info card.
+ * country/population may be null — we show only what the data actually has.
+ */
+data class CityInfo(
+    val name: String,          // as stored, e.g. "Melbourne, Victoria, Australia"
+    val country: String?,
+    val population: Long?,
+) {
+    /** Just the leading city name for a clean heading, e.g. "Melbourne". */
+    val shortName: String get() = name.substringBefore(',').trim()
+}
+
 /** Straight-line distance between two points in kilometres (haversine formula). */
 fun haversineKm(a: LatLng, b: LatLng): Double {
     val earthRadiusKm = 6371.0

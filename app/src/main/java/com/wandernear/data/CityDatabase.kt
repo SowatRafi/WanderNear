@@ -3,6 +3,7 @@ package com.wandernear.data
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.wandernear.core.model.CityInfo
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.haversineKm
@@ -52,6 +53,18 @@ class CityDatabase(private val context: Context) {
             .take(limit)
 
         attachDiets(db, ranked)
+    }
+
+    /** Reads the pack's single city row — the facts shown on the City Info card. */
+    fun cityInfo(): CityInfo? = open().use { db ->
+        db.rawQuery("SELECT name, country, population FROM city LIMIT 1", null).use { c ->
+            if (!c.moveToFirst()) return@use null
+            CityInfo(
+                name = c.getString(0),
+                country = c.getStringOrNull(1),
+                population = if (c.isNull(2)) null else c.getLong(2),
+            )
+        }
     }
 
     /** Runs one search query and reads the rows into [Place] objects. */

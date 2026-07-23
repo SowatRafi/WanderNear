@@ -60,6 +60,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wandernear.core.model.CityInfo
+import com.wandernear.core.model.CountryFacts
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.UserPreferences
@@ -130,6 +132,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     var pendingQuestion by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    // The active city's facts (name, country, population) for the City Info card.
+    var cityInfo by remember { mutableStateOf<CityInfo?>(null) }
 
     // --- Voice input (offline, Vosk) ---
     // Idle → Preparing (loading the model) → Listening (actually capturing).
@@ -309,6 +313,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         }
     }
 
+    // Load the city facts once, off the main thread.
+    LaunchedEffect(Unit) {
+        cityInfo = withContext(Dispatchers.IO) { db.cityInfo() }
+    }
+
     // Keep the newest message in view.
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
@@ -324,7 +333,12 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 
     Column(Modifier.fillMaxSize().imePadding()) {
         if (messages.isEmpty()) {
-            EmptyState(onExample = ::ask, modifier = Modifier.weight(1f))
+            EmptyState(
+                onExample = ::ask,
+                city = cityInfo,
+                onCallEmergency = { openDialer(context, it) },
+                modifier = Modifier.weight(1f),
+            )
         } else {
             LazyColumn(
                 state = listState,
@@ -362,12 +376,23 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EmptyState(onExample: (String) -> Unit, modifier: Modifier) {
+private fun EmptyState(
+    onExample: (String) -> Unit,
+    city: CityInfo?,
+    onCallEmergency: (String) -> Unit,
+    modifier: Modifier,
+) {
     Column(
         modifier = modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        // A compact snapshot of the city you're exploring, plus a one-tap dialer
+        // for the local emergency number.
+        city?.let {
+            CityInfoCard(it, onCallEmergency)
+            Spacer(Modifier.height(24.dp))
+        }
         Text("WanderNear", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
@@ -382,6 +407,45 @@ private fun EmptyState(onExample: (String) -> Unit, modifier: Modifier) {
                 AssistChip(onClick = { onExample(example) }, label = { Text(example) })
             }
         }
+    }
+}
+
+/** Compact facts about the city you're exploring, shown on the empty screen. */
+@Composable
+private fun CityInfoCard(city: CityInfo, onCallEmergency: (String) -> Unit) {
+    val facts = CountryFacts.forCountry(city.country)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text(city.shortName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            city.country?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(10.dp))
+            city.population?.let { CityFactRow("Population", "%,d".format(it)) }
+            facts?.let {
+                CityFactRow("Currency", it.currency)
+                CityFactRow("Emergency", it.emergency)
+                Spacer(Modifier.height(8.dp))
+                // Opens the dialer pre-filled — the user still taps call themselves.
+                TextButton(onClick = { onCallEmergency(it.emergency) }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Call emergency (${it.emergency})")
+                }
+            }
+        }
+    }
+}
+
+/** One "Label   value" line inside the City Info card. */
+@Composable
+private fun CityFactRow(label: String, value: String) {
+    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(104.dp),
+        )
+        Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -599,6 +663,16 @@ private fun openDirections(context: Context, place: Place) {
         context.startActivity(Intent(Intent.ACTION_VIEW, uri))
     } catch (e: ActivityNotFoundException) {
         Toast.makeText(context, "No maps app found on this phone", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Opens the phone's dialer pre-filled with a number (never auto-dials — the
+ *  user taps call themselves). Used for the local emergency number. */
+private fun openDialer(context: Context, number: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")))
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(context, "No dialer app found on this phone", Toast.LENGTH_SHORT).show()
     }
 }
 
