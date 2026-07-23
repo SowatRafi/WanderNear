@@ -16,7 +16,7 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M5 + Travel Mode + M6.1/M6.2 done ✅ (25 commits, all pushed; latest `ea0c75a`)
+## Status: M1–M5 + Travel Mode + M6.1–M6.3 done ✅ (28 commits, all pushed; latest `fa5159f`)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
@@ -113,7 +113,7 @@ adb shell am start -n com.wandernear/.MainActivity
 ## Verify it's all there (fresh session)
 
 ```powershell
-git log --oneline        # 25 commits, latest = ea0c75a (M6.2 Safety section)
+git log --oneline        # 28 commits, latest = fa5159f (M6.3 Shopping spots)
 git status               # clean
 ```
 
