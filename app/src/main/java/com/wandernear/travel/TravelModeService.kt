@@ -6,29 +6,44 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.location.LocationListener
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.wandernear.MainActivity
 import com.wandernear.R
+import com.wandernear.core.model.LatLng
+import com.wandernear.data.CityDatabase
+import com.wandernear.data.LocationProvider
 import com.wandernear.data.PreferencesRepository
 import com.wandernear.reminders.Notifier
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
  * The foreground service behind Travel Mode.
  *
  * It runs ONLY while the user has Travel Mode switched on, always with a visible
- * "Travel Mode is on" notification, and (from TM.2 on) uses "while-in-use"
- * location — started from the user's tap, so no background-location permission is
- * needed. It never resurrects itself in the background (START_NOT_STICKY).
+ * "Travel Mode is on" notification, and uses "while-in-use" location — started
+ * from the user's tap, so no background-location permission is needed. It never
+ * resurrects itself in the background (START_NOT_STICKY).
  *
- * TM.1 scope: prove the service + visible banner + Stop work. The live location
- * and nearby-place alerts arrive in TM.2.
+ * TM.1 gave the service + visible banner + Stop. TM.2 (here) adds the live
+ * location watch and the grounded "worth a visit nearby" alerts — each alert is a
+ * real retrieved DB row, never invented.
  */
 class TravelModeService : Service() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val db by lazy { CityDatabase(this) }
+    // Places we've already alerted this session, so we don't nag about the same one.
+    private val alerted = ConcurrentHashMap.newKeySet<Int>()
+    private var locationListener: LocationListener? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -48,6 +63,7 @@ class TravelModeService : Service() {
         // the system kills us. Type = location so the OS knows why we run.
         startForeground(NOTIF_ID, ongoingNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         isRunning = true
+        startLocationWatch()
         // START_NOT_STICKY: if the process is killed we do NOT silently restart in
         // the background — the user re-enables Travel Mode themselves. Privacy first.
         return START_NOT_STICKY
@@ -55,7 +71,42 @@ class TravelModeService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        locationListener?.let { LocationProvider.stopUpdates(this, it) }
+        locationListener = null
+        scope.cancel()
         isRunning = false
+    }
+
+    /** Begins watching location: an immediate check off the last-known fix, then
+     *  live updates as the user moves (a battery-friendly cadence). */
+    private fun startLocationWatch() {
+        // A quick off→on toggle (or Stop then re-enable) can deliver a second
+        // onStartCommand to this SAME instance before onDestroy runs — stop any prior
+        // listener first so we never orphan one that keeps reading location.
+        locationListener?.let { LocationProvider.stopUpdates(this, it) }
+        // Seed an immediate check ONLY from a fresh fix — a stale last-known could
+        // falsely claim you're near a place you left. Live updates follow.
+        LocationProvider.recentLastKnown(this, MIN_TIME_MS)?.let { checkNearby(it) }
+        locationListener = LocationProvider.requestUpdates(this, MIN_TIME_MS, MIN_DISTANCE_M) { here ->
+            checkNearby(here)
+        }
+    }
+
+    /** For a fix, find the nearest notable place we haven't mentioned yet and, if
+     *  it's within range, alert the user. Every result is a real retrieved row. */
+    private fun checkNearby(here: LatLng) {
+        scope.launch {
+            val hit = db.nearbyNotable(here, RADIUS_KM).firstOrNull { it.id !in alerted } ?: return@launch
+            if (!alerted.add(hit.id)) return@launch          // another fix just alerted it
+            val sub = hit.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Worth a visit"
+            val dist = hit.distanceKm?.let { " · ${String.format(Locale.US, "%.1f", it)} km away" } ?: ""
+            Notifier.notifyTravel(
+                this@TravelModeService,
+                "travel:${hit.id}".hashCode(),
+                "Worth a visit nearby",
+                "${hit.name} — $sub$dist",
+            )
+        }
     }
 
     /** The persistent "Travel Mode is on" banner, with Stop + tap-to-open actions. */
@@ -85,6 +136,9 @@ class TravelModeService : Service() {
     companion object {
         const val ACTION_STOP = "com.wandernear.travel.STOP"
         private const val NOTIF_ID = 4201
+        private const val MIN_TIME_MS = 120_000L    // ~2 min between location checks…
+        private const val MIN_DISTANCE_M = 120f     // …or when you've moved ~120 m
+        private const val RADIUS_KM = 0.3           // "near you" = within 300 m
 
         /** True only while a service instance is actually running. It's static, so a
          *  process kill/reboot resets it to false for free — the app reads it at

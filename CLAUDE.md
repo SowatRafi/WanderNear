@@ -136,6 +136,19 @@ never guessed.
   groundable, or unsafe to auto-trigger.)
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
+- **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs
+  a WHILE-IN-USE location foreground service (never background — no
+  ACCESS_BACKGROUND_LOCATION) with an always-visible "Travel Mode is on" banner.
+  TM.1: the toggle + service + banner + Stop, started only from the on-screen tap,
+  START_NOT_STICKY (a killed process never silently restarts), and MainActivity
+  self-heals a stale "on" switch on launch. TM.2: a battery-friendly live location
+  watch (~2 min / ~120 m cadence, low-power network provider preferred) that fires
+  grounded "worth a visit nearby" alerts within 300 m — each alert is a REAL
+  retrieved DB row (`CityDatabase.nearbyNotable`: places with a Wikipedia summary or
+  an attraction), never invented, de-duped per session. The banner is the privacy
+  guarantee: we refuse to start the location service if its notification channel is
+  muted, and the immediate seed check only runs off a *fresh* fix so a stale
+  last-known can't falsely claim you're near a place you left.
 
 ## Travel Journal design (M3)
 

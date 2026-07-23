@@ -8,6 +8,7 @@ import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.haversineKm
 import com.wandernear.core.retrieval.SearchSpec
+import kotlin.math.cos
 import java.io.File
 
 /**
@@ -23,8 +24,21 @@ class CityDatabase(private val context: Context) {
     private fun open(): SQLiteDatabase {
         val dbFile = File(context.filesDir, DB_NAME)
         if (!dbFile.exists()) {
-            context.assets.open(DB_NAME).use { input ->
-                dbFile.outputStream().use { output -> input.copyTo(output) }
+            // Serialize the first-run copy across ALL instances (chat + Travel Mode)
+            // and publish it atomically (write a temp file, then rename), so a
+            // concurrent open can never see a half-written pack — a partial copy
+            // would corrupt our sole source of truth and never be re-copied.
+            synchronized(COPY_LOCK) {
+                if (!dbFile.exists()) {                       // re-check under the lock
+                    val tmp = File(context.filesDir, "$DB_NAME.tmp")
+                    context.assets.open(DB_NAME).use { input ->
+                        tmp.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    if (!tmp.renameTo(dbFile)) {
+                        tmp.delete()
+                        throw IllegalStateException("Failed to install $DB_NAME")
+                    }
+                }
             }
         }
         return SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
@@ -65,6 +79,30 @@ class CityDatabase(private val context: Context) {
                 population = if (c.isNull(2)) null else c.getLong(2),
             )
         }
+    }
+
+    /**
+     * Grounded "worth a visit near you" query for Travel Mode: notable places (a
+     * Wikipedia write-up, or an attraction) within [radiusKm] of [origin], nearest
+     * first. Every result is a real retrieved row — never invented.
+     */
+    fun nearbyNotable(origin: LatLng, radiusKm: Double, limit: Int = 5): List<Place> = open().use { db ->
+        // Rough bounding box so we don't scan all ~20k rows (lat/lng aren't indexed).
+        val dLat = radiusKm / 111.0
+        val dLng = radiusKm / (111.0 * cos(Math.toRadians(origin.lat)).coerceAtLeast(0.01))
+        val sql = "SELECT p.id, p.name, p.category, p.subcategory, p.lat, p.lng, " +
+            "p.address, p.cuisine, p.religion, p.summary FROM place p " +
+            "WHERE (p.summary IS NOT NULL OR p.category = 'attraction') " +
+            "AND p.lat BETWEEN ? AND ? AND p.lng BETWEEN ? AND ?"
+        val args = arrayOf(
+            (origin.lat - dLat).toString(), (origin.lat + dLat).toString(),
+            (origin.lng - dLng).toString(), (origin.lng + dLng).toString(),
+        )
+        db.rawQuery(sql, args).use { readPlaces(it) }
+            .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
+            .filter { (it.distanceKm ?: Double.MAX_VALUE) <= radiusKm }
+            .sortedBy { it.distanceKm }
+            .take(limit)
     }
 
     /** Runs one search query and reads the rows into [Place] objects. */
@@ -140,5 +178,6 @@ class CityDatabase(private val context: Context) {
 
     private companion object {
         const val DB_NAME = "melbourne.db"
+        val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
     }
 }
