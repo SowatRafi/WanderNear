@@ -3,7 +3,6 @@ package com.wandernear.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.compose.material3.IconButton
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.wandernear.voice.VoiceRecognizer
 import android.content.ActivityNotFoundException
@@ -70,7 +69,26 @@ import com.wandernear.data.journal.SavedPlace
 import com.wandernear.ai.LlmEngine
 import com.wandernear.ai.ModelManager
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import android.provider.Settings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -415,7 +433,6 @@ private fun InputBar(
     voiceState: VoiceState,
     onMicToggle: () -> Unit,
 ) {
-    val listening = voiceState == VoiceState.Listening
     // The hint text is our clearest signal of which voice state we're in.
     val placeholder = when (voiceState) {
         VoiceState.Preparing -> "Preparing voice…"
@@ -427,14 +444,7 @@ private fun InputBar(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Mic: tap to speak (offline). Turns into a red stop while listening.
-            IconButton(onClick = onMicToggle) {
-                Text(
-                    if (listening) "■" else "🎤",
-                    fontSize = 20.sp,
-                    color = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            MicButton(voiceState = voiceState, onClick = onMicToggle)
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -448,6 +458,108 @@ private fun InputBar(
             Button(onClick = onSend, enabled = value.isNotBlank()) { Text("Send") }
         }
     }
+}
+
+/**
+ * The mic button, which shows what voice is doing right now:
+ *  - Idle:      a mic icon — tap to speak.
+ *  - Preparing: a small spinner while the model loads (taps are ignored).
+ *  - Listening: a red stop icon wrapped in a soft, expanding "sonar" pulse so
+ *               it's obvious the mic is live; tap to stop.
+ * The pulse is skipped when the phone's "remove animations" setting is on, and
+ * the button carries a spoken label for screen readers.
+ */
+@Composable
+private fun MicButton(voiceState: VoiceState, onClick: () -> Unit) {
+    val context = LocalContext.current
+    // Honour the system accessibility setting that turns animations off.
+    val animationsOn = remember {
+        Settings.Global.getFloat(
+            context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f,
+        ) != 0f
+    }
+    // liveRegion = Polite → a screen reader announces each Idle→Preparing→Listening
+    // change without stealing focus, so a blind user knows when to start speaking.
+    IconButton(
+        onClick = onClick,
+        enabled = voiceState != VoiceState.Preparing,
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            // Soft "sonar" halo behind the stop icon — only while listening. It's a
+            // separate composable so the infinite animation exists ONLY on screen
+            // (no wasted frames while idle).
+            if (voiceState == VoiceState.Listening && animationsOn) PulseHalo()
+            when (voiceState) {
+                VoiceState.Preparing ->
+                    // The spinner has no glyph, so give it a spoken label of its own.
+                    CircularProgressIndicator(
+                        Modifier
+                            .size(20.dp)
+                            .semantics { contentDescription = "Preparing voice" },
+                        strokeWidth = 2.dp,
+                    )
+                VoiceState.Listening ->
+                    Icon(WnStopIcon, "Stop listening", tint = MaterialTheme.colorScheme.error)
+                VoiceState.Idle ->
+                    Icon(WnMicIcon, "Speak your search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/**
+ * The expanding, fading red halo shown while actively listening. Kept in its own
+ * composable so the infinite pulse animation is created only while it's on screen
+ * and is disposed the moment listening stops — no frame-clock cost when idle.
+ */
+@Composable
+private fun PulseHalo() {
+    val pulse = rememberInfiniteTransition(label = "mic-pulse")
+    val pulseScale by pulse.animateFloat(
+        initialValue = 1f, targetValue = 1.7f,
+        animationSpec = infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing)),
+        label = "scale",
+    )
+    val pulseAlpha by pulse.animateFloat(
+        initialValue = 0.35f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing)),
+        label = "alpha",
+    )
+    Box(
+        Modifier
+            .size(22.dp)
+            .graphicsLayer {
+                scaleX = pulseScale
+                scaleY = pulseScale
+                alpha = pulseAlpha
+            }
+            .background(MaterialTheme.colorScheme.error, CircleShape),
+    )
+}
+
+// Small inline vector icons, so we don't pull in the heavy material-icons-extended
+// dependency just for a mic and a stop square. These are the standard Material
+// glyph paths; they tint with the current colour and stay crisp at any size.
+private val WnMicIcon: ImageVector by lazy {
+    ImageVector.Builder("Mic", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(
+            PathParser().parsePathString(
+                "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" +
+                    "M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z",
+            ).toNodes(),
+            fill = SolidColor(Color.Black),
+        )
+    }.build()
+}
+
+private val WnStopIcon: ImageVector by lazy {
+    ImageVector.Builder("Stop", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(
+            PathParser().parsePathString("M6 6h12v12H6z").toNodes(),
+            fill = SolidColor(Color.Black),
+        )
+    }.build()
 }
 
 /** Opens the phone's default maps app at the place (no map SDK or API key needed). */
