@@ -37,6 +37,7 @@ CREATE TABLE place (
     lat             REAL NOT NULL,
     lng             REAL NOT NULL,
     address         TEXT,
+    suburb          TEXT,            -- addr:suburb, for on-device "which suburb am I in"
     cuisine         TEXT,            -- raw OSM cuisine value, e.g. "indian;pizza"
     religion        TEXT,            -- for places of worship
     denomination    TEXT,

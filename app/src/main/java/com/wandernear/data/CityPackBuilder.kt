@@ -376,6 +376,7 @@ object CityPackBuilder {
             put("subcategory", kind.subcategory)
             put("lat", lat); put("lng", lng)
             address(el.tags)?.let { put("address", it) }
+            el.tags["addr:suburb"]?.ifBlank { null }?.let { put("suburb", it) }
             el.tags["cuisine"]?.let { put("cuisine", it) }
             el.tags["religion"]?.let { put("religion", it) }
             el.tags["denomination"]?.let { put("denomination", it) }

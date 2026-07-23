@@ -110,6 +110,18 @@ private val MELBOURNE_CBD = LatLng(-37.8136, 144.9631)
 // Example prompts shown on the empty screen to help the user get started.
 private val EXAMPLES = listOf("Vegetarian food", "Temples", "Halal food", "Parks & nature", "Museums", "Shopping & markets")
 
+// Radius for the "worth visiting near you" suggestions — wide enough to surface a
+// few notable spots in a city, ranked nearest-first.
+private const val NEARBY_RADIUS_KM = 15.0
+
+// "Daily needs" categories shown in the essentials card, in display order.
+private val ESSENTIAL_CATEGORIES = listOf("safety", "health", "fuel", "parking")
+
+// The on-device suburb is only shown from a fresh fix within this range of the pack,
+// so a stale fix or a fix in another city can never mislabel where you are.
+private const val LOCALITY_MAX_KM = 25.0
+private const val LOCALITY_FIX_MAX_AGE_MS = 10 * 60 * 1000L   // 10 minutes
+
 private enum class Role { User, Assistant }
 // Voice goes through three explicit states so the UI can be honest about what's
 // happening: Idle (not using voice) → Preparing (loading the model) → Listening.
@@ -139,10 +151,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val listState = rememberLazyListState()
     // The active city's facts (name, country, population) for the City Info card.
     var cityInfo by remember(activePack) { mutableStateOf<CityInfo?>(null) }
-    // Nearest police stations for the Safety card (grounded rows, never invented).
-    var nearbyPolice by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    // Nearest essentials (police/hospital/fuel/parking) for the daily-needs card.
+    var essentials by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
     // The active city's centre — the "near me" fallback when we have no GPS fix.
     var cityCenter by remember(activePack) { mutableStateOf<LatLng?>(null) }
+    // The traveller's actual locality (on-device nearest suburb) for the header,
+    // and grounded "worth visiting near you" suggestions — both loaded below.
+    var locality by remember(activePack) { mutableStateOf<String?>(null) }
+    var notable by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
 
     // --- Voice input (offline, Vosk) ---
     // Idle → Preparing (loading the model) → Listening (actually capturing).
@@ -329,9 +345,16 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         cityCenter = center
         cityInfo = withContext(Dispatchers.IO) { db.cityInfo() }
-        nearbyPolice = withContext(Dispatchers.IO) {
-            db.nearbyPolice(LocationProvider.lastKnown(context) ?: center ?: MELBOURNE_CBD)
-        }
+        // Read location off the main thread (binder IPC). A stale fix is fine for
+        // ranking; the "you are here" label below uses a FRESH fix only.
+        val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
+        val origin = fix ?: center ?: MELBOURNE_CBD
+        essentials = withContext(Dispatchers.IO) { db.nearestEssentials(origin, ESSENTIAL_CATEGORIES) }
+        notable = withContext(Dispatchers.IO) { db.nearbyNotable(origin, NEARBY_RADIUS_KM) }
+        // Which suburb am I in? Derived ON-DEVICE from the pack (no GPS ever leaves the
+        // phone), from a FRESH fix within the pack's area — else null (show the city).
+        val freshFix = withContext(Dispatchers.IO) { LocationProvider.recentLastKnown(context, LOCALITY_FIX_MAX_AGE_MS) }
+        locality = freshFix?.let { withContext(Dispatchers.IO) { db.nearestSuburb(it, LOCALITY_MAX_KM) } }
     }
 
     // Keep the newest message in view.
@@ -352,10 +375,13 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
             EmptyState(
                 onExample = ::ask,
                 city = cityInfo,
-                police = nearbyPolice,
+                locality = locality,
+                essentials = essentials,
+                notable = notable,
                 onCallEmergency = { openDialer(context, it) },
-                onCallStation = { openDialer(context, it) },
+                onCall = { openDialer(context, it) },
                 onDirections = { openDirections(context, it) },
+                onSave = { saveToTrips(it) },
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -398,30 +424,39 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 private fun EmptyState(
     onExample: (String) -> Unit,
     city: CityInfo?,
-    police: List<Place>,
+    locality: String?,
+    essentials: List<Place>,
+    notable: List<Place>,
     onCallEmergency: (String) -> Unit,
-    onCallStation: (String) -> Unit,
+    onCall: (String) -> Unit,
     onDirections: (Place) -> Unit,
+    onSave: (Place) -> Unit,
     modifier: Modifier,
 ) {
     Column(
-        // Scrollable: with the City Info + Nearest-police cards always present, the
-        // welcome text and example chips can sit below the fold on smaller screens —
-        // without this they'd be clipped and unreachable.
+        // Scrollable: with the City Info + suggestions + police cards always present,
+        // the welcome text and example chips can sit below the fold on smaller screens
+        // — without this they'd be clipped and unreachable.
         modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Top,
     ) {
-        // A compact snapshot of the city you're exploring, plus a one-tap dialer
+        // Where you are (your actual suburb when we have a fix), plus a one-tap dialer
         // for the local emergency number.
         city?.let {
-            CityInfoCard(it, onCallEmergency)
+            CityInfoCard(it, locality, onCallEmergency)
             Spacer(Modifier.height(24.dp))
         }
-        // Grounded safety help: the nearest police stations. Hidden entirely when
-        // the pack has none, so we never show an empty section.
-        if (police.isNotEmpty()) {
-            SafetyCard(police, onDirections, onCallStation)
+        // Grounded travel suggestions: notable places worth visiting near you. Hidden
+        // when the pack has none nearby, so we never show an empty section.
+        if (notable.isNotEmpty()) {
+            NotableCard(notable, onDirections, onSave)
+            Spacer(Modifier.height(24.dp))
+        }
+        // Daily needs near you: nearest police / hospital / fuel / parking. Hidden
+        // entirely when the pack has none, so we never show an empty section.
+        if (essentials.isNotEmpty()) {
+            EssentialsCard(essentials, onDirections, onCall)
             Spacer(Modifier.height(24.dp))
         }
         Text("WanderNear", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -441,18 +476,61 @@ private fun EmptyState(
     }
 }
 
-/** Compact facts about the city you're exploring, shown on the empty screen. */
+/**
+ * "Worth visiting nearby": grounded travel suggestions — real notable places near you
+ * (each a retrieved DB row, with its Wikipedia "why" where the pack has one). Never
+ * invented; the summary text is real Wikipedia, credited in the footer.
+ */
 @Composable
-private fun CityInfoCard(city: CityInfo, onCallEmergency: (String) -> Unit) {
-    val facts = CountryFacts.forCountry(city.country)
+private fun NotableCard(places: List<Place>, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text(city.shortName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            city.country?.let {
+            Text("Worth visiting nearby", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            places.forEachIndexed { index, place ->
+                if (index > 0) Spacer(Modifier.height(14.dp))
+                Text(place.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                val sub = place.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }
+                val dist = place.distanceKm?.let { "%.1f km away".format(it) }
+                val meta = listOfNotNull(sub, dist).joinToString(" · ")
+                if (meta.isNotBlank()) {
+                    Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // The real Wikipedia "why", trimmed — only shown when the pack has one.
+                place.summary?.let { s ->
+                    Spacer(Modifier.height(2.dp))
+                    val why = s.trim().let { if (it.length > 160) it.take(160).trimEnd() + "…" else it }
+                    Text(why, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onDirections(place) }) { Text("Directions") }
+                    TextButton(onClick = { onSave(place) }) { Text("Save") }
+                }
+            }
+        }
+    }
+}
+
+/** Compact facts about the place you're in, shown on the empty screen. */
+@Composable
+private fun CityInfoCard(city: CityInfo, locality: String?, onCallEmergency: (String) -> Unit) {
+    val facts = CountryFacts.forCountry(city.country)
+    // Show the traveller's actual locality (reverse-geocoded suburb) as the heading
+    // when we have it and it differs from the pack city; otherwise the pack city. Null
+    // just means "no fix / offline" — we never invent a place name.
+    val here = locality?.takeIf { it.isNotBlank() && !it.equals(city.shortName, ignoreCase = true) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text(here ?: city.shortName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            // If we're showing a suburb, name the wider city underneath; else the country.
+            val subtitle = if (here != null) listOfNotNull(city.shortName, city.country).joinToString(", ") else city.country
+            subtitle?.let {
                 Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
             Spacer(Modifier.height(10.dp))
-            city.population?.let { CityFactRow("Population", "%,d".format(it)) }
+            // Population is the pack CITY's figure, so only show it under the city
+            // heading — under a suburb it would misread as the suburb's population.
+            if (here == null) city.population?.let { CityFactRow("Population", "%,d".format(it)) }
             facts?.let {
                 CityFactRow("Currency", it.currency)
                 CityFactRow("Emergency", it.emergency)
@@ -467,25 +545,30 @@ private fun CityInfoCard(city: CityInfo, onCallEmergency: (String) -> Unit) {
 }
 
 /**
- * The Safety card: the nearest police stations from the pack, each with a
- * Directions button (always) and a Call button (only when the station lists a
- * phone number — never a dead button). Every row is a real retrieved place, so
- * we never invent a station, address, or number.
+ * The "Daily needs near you" card: the single nearest police station, hospital, fuel
+ * station and car park from the pack, each labelled by type, with Directions (always)
+ * and Call (only when OSM lists a phone — never a dead button). Every row is a real
+ * retrieved place, so we never invent one.
  */
 @Composable
-private fun SafetyCard(
-    police: List<Place>,
+private fun EssentialsCard(
+    essentials: List<Place>,
     onDirections: (Place) -> Unit,
-    onCallStation: (String) -> Unit,
+    onCall: (String) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Nearest police", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Daily needs near you", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            police.forEachIndexed { index, station ->
+            essentials.forEachIndexed { index, place ->
                 if (index > 0) Spacer(Modifier.height(12.dp))
-                Text(station.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                station.distanceKm?.let {
+                Text(
+                    essentialLabel(place.category),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(place.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                place.distanceKm?.let {
                     Text(
                         "%.1f km away".format(it),
                         style = MaterialTheme.typography.labelMedium,
@@ -493,15 +576,24 @@ private fun SafetyCard(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onDirections(station) }) { Text("Directions") }
-                    // Only offered when OSM has a number for this station.
-                    station.phone?.let { phone ->
-                        TextButton(onClick = { onCallStation(phone) }) { Text("Call") }
+                    TextButton(onClick = { onDirections(place) }) { Text("Directions") }
+                    // Only offered when OSM has a number for this place.
+                    place.phone?.let { phone ->
+                        TextButton(onClick = { onCall(phone) }) { Text("Call") }
                     }
                 }
             }
         }
     }
+}
+
+/** A friendly type label for an essentials row, from its category. */
+private fun essentialLabel(category: String): String = when (category) {
+    "safety" -> "Police"
+    "health" -> "Hospital"
+    "fuel" -> "Fuel"
+    "parking" -> "Parking"
+    else -> category.replaceFirstChar { it.uppercase() }
 }
 
 /** One "Label   value" line inside the City Info card. */

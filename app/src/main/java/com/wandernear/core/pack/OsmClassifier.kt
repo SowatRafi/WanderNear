@@ -50,6 +50,9 @@ object OsmClassifier {
             amenity != null && amenity in FOOD -> Kind("food", amenity)
             amenity == "place_of_worship" -> Kind("worship", tags["religion"] ?: "place_of_worship")
             amenity == "police" -> Kind("safety", "police")
+            amenity == "hospital" -> Kind("health", "hospital")
+            amenity == "fuel" -> Kind("fuel", "fuel")
+            amenity == "parking" -> Kind("parking", "parking")
             amenity == "marketplace" -> Kind("shopping", "marketplace")
             shop != null && shop in SHOPPING -> Kind("shopping", shop)
             tourism != null && tourism in TOURISM -> Kind("attraction", tourism)
@@ -93,6 +96,9 @@ object OsmClassifier {
               nwr["amenity"="police"](area.a);
               nwr["amenity"="marketplace"](area.a);
               nwr["shop"~"^(${re(SHOPPING)})${'$'}"](area.a);
+              nwr["amenity"="hospital"](area.a);
+              nwr["amenity"="fuel"](area.a);
+              nwr["amenity"="parking"](area.a);
               relation["route"="hiking"](area.a);
             );
             out center tags;

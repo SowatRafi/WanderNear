@@ -177,11 +177,17 @@ never guessed.
         - Remaining: **M6.4d** the "Download data for [city]?" search/confirm/progress UI
           (replaces the temporary dev trigger in Preferences); **M6.4e** silent background
           refresh (WorkManager) of the active city when online.
-    - **M6.5** Essentials near you (planned — next): add hospital / fuel / parking to the
-      pipeline (named-only, so grounded + manageable) + a "daily needs near you" home card
-      (Directions/Call) and a reverse-geocoded suburb label, so the app shows your actual
-      local area. Grounded from OSM/Wikipedia — deliberately NOT web-scraped (offline + the
-      never-hallucinate rule). Requested after "why does it say Melbourne when I'm in Werribee?"
+    - **M6.5** ✅ Traveller home (where-am-I + suggestions + essentials): the home now shows
+      your ACTUAL suburb (e.g. "Werribee") derived ON-DEVICE from a new `place.suburb` column
+      (the nearest place's addr:suburb, within a 25 km guard) — **no GPS ever leaves the
+      phone**; a "Worth visiting nearby" card of grounded notable places (with their Wikipedia
+      why); and a "Daily needs near you" card — nearest police / hospital / fuel / parking (new
+      `health`/`fuel`/`parking` categories, added to BOTH the pipeline and the on-device
+      `OsmClassifier` so ANY city gets them; named-only so grounded + small). Melbourne pack
+      rebuilt (22,624 places). An adversarial review caught the first attempt reverse-geocoding
+      via Nominatim (which leaked the user's GPS off-device — a #1 violation) plus a false
+      "suburb in the wrong city" composition; both fixed by going fully on-device with the
+      distance guard, off-main-thread location reads, and a fresh-fix requirement for the label.
     - Remaining: annual festivals.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.

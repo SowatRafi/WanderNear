@@ -35,6 +35,12 @@ def classify(tags):
         return "worship", tags.get("religion") or "place_of_worship"
     if amenity == "police":
         return "safety", "police"
+    if amenity == "hospital":
+        return "health", "hospital"
+    if amenity == "fuel":
+        return "fuel", "fuel"
+    if amenity == "parking":
+        return "parking", "parking"
     if amenity == "marketplace":
         return "shopping", "marketplace"
     if tags.get("shop") in SHOPPING:
@@ -142,12 +148,12 @@ def main():
 
         cursor = conn.execute(
             """INSERT OR IGNORE INTO place (city_id, osm_type, osm_id, name,
-                   category, subcategory, lat, lng, address, cuisine, religion,
+                   category, subcategory, lat, lng, address, suburb, cuisine, religion,
                    denomination, opening_hours, phone, website, wikidata_qid,
                    summary, summary_url, summary_license, thumbnail_url)
-               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (element["type"], element["id"], name, category, subcategory, lat, lng,
-             address(tags), tags.get("cuisine"), tags.get("religion"),
+             address(tags), tags.get("addr:suburb"), tags.get("cuisine"), tags.get("religion"),
              tags.get("denomination"), tags.get("opening_hours"),
              tags.get("phone") or tags.get("contact:phone"),
              tags.get("website") or tags.get("contact:website"),

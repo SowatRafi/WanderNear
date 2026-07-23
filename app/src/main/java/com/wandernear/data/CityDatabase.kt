@@ -34,24 +34,39 @@ class CityDatabase(
             else packName
         val dbFile = File(context.filesDir, name)
         // Only the BUNDLED pack is seeded from assets; downloaded packs already live
-        // in filesDir/packs/. This is what lets us open ANY active city, not just
-        // Melbourne. Seeds atomically (temp file, then rename) across all instances
-        // (chat + Travel Mode) so a concurrent open never sees a half-written pack.
-        if (name == BUNDLED_PACK && !dbFile.exists()) {
-            synchronized(COPY_LOCK) {
-                if (!dbFile.exists()) {                       // re-check under the lock
-                    val tmp = File(context.filesDir, "$BUNDLED_PACK.tmp")
-                    context.assets.open(BUNDLED_PACK).use { input ->
-                        tmp.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    if (!tmp.renameTo(dbFile)) {
-                        tmp.delete()
-                        throw IllegalStateException("Failed to install $BUNDLED_PACK")
-                    }
-                }
-            }
-        }
+        // in filesDir/packs/. This is what lets us open ANY active city, not just Melbourne.
+        if (name == BUNDLED_PACK) seedBundled(dbFile)
         return SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
+    }
+
+    /**
+     * Install the bundled pack on first run — AND re-install it after an app update that
+     * ships a newer one, tracked by a small version marker beside it.
+     *
+     * Without that version check the pack was copied exactly once, so a rebuilt pack (new
+     * data, or a new column like `suburb`) never reached an existing install — it silently
+     * kept the stale one, and a query for a new column would crash. Publishes atomically
+     * (temp file, then rename) and is serialized across instances (chat + Travel Mode) so a
+     * concurrent open never sees a half-written pack.
+     */
+    private fun seedBundled(dbFile: File) {
+        val marker = File(context.filesDir, "$BUNDLED_PACK.version")
+        fun installed(): Int? =
+            if (marker.exists()) marker.runCatching { readText().trim().toInt() }.getOrNull() else null
+        if (dbFile.exists() && installed() == BUNDLED_PACK_VERSION) return
+        synchronized(COPY_LOCK) {
+            if (dbFile.exists() && installed() == BUNDLED_PACK_VERSION) return   // re-check under the lock
+            val tmp = File(context.filesDir, "$BUNDLED_PACK.tmp")
+            context.assets.open(BUNDLED_PACK).use { input ->
+                tmp.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (dbFile.exists()) dbFile.delete()
+            if (!tmp.renameTo(dbFile)) {
+                tmp.delete()
+                throw IllegalStateException("Failed to install $BUNDLED_PACK")
+            }
+            marker.writeText(BUNDLED_PACK_VERSION.toString())
+        }
     }
 
     /**
@@ -102,6 +117,57 @@ class CityDatabase(
         db.rawQuery("SELECT AVG(lat), AVG(lng) FROM place", null).use { c ->
             if (!c.moveToFirst() || c.isNull(0) || c.isNull(1)) return@use null
             LatLng(c.getDouble(0), c.getDouble(1))
+        }
+    }
+
+    /**
+     * The suburb of the nearest place that has one, if it's within [maxKm] of [origin]
+     * — the ON-DEVICE "which suburb am I in". No GPS ever leaves the phone (unlike a
+     * web reverse-geocode). Returns null (→ caller shows the pack city) when we're
+     * outside the pack's area or the pack has no nearby addr:suburb data. Grounded:
+     * a real OSM addr:suburb. The [maxKm] guard means a fix in a DIFFERENT city (e.g.
+     * Sydney with the Melbourne pack) yields null, never a wrong "suburb in city" claim.
+     */
+    fun nearestSuburb(origin: LatLng, maxKm: Double): String? = open().use { db ->
+        // Rough bounding box first so we don't scan all rows (lat/lng aren't indexed).
+        val dLat = maxKm / 111.0
+        val dLng = maxKm / (111.0 * cos(Math.toRadians(origin.lat)).coerceAtLeast(0.01))
+        val args = arrayOf(
+            (origin.lat - dLat).toString(), (origin.lat + dLat).toString(),
+            (origin.lng - dLng).toString(), (origin.lng + dLng).toString(),
+        )
+        try {
+            db.rawQuery(
+                "SELECT suburb, lat, lng FROM place WHERE suburb IS NOT NULL " +
+                    "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                args,
+            ).use { c ->
+                var best: String? = null
+                var bestKm = Double.MAX_VALUE
+                while (c.moveToNext()) {
+                    val km = haversineKm(origin, LatLng(c.getDouble(1), c.getDouble(2)))
+                    if (km < bestKm) { bestKm = km; best = c.getString(0) }
+                }
+                if (bestKm <= maxKm) best else null
+            }
+        } catch (e: Exception) {
+            // A pack built before the `suburb` column exists (an older download) has no
+            // such column — degrade to showing the city name rather than crashing.
+            null
+        }
+    }
+
+    /**
+     * The single nearest place in each of [categories] (e.g. safety/health/fuel/
+     * parking) — the "daily needs near you" card. Every result is a real retrieved
+     * row; a category the pack has nothing for is simply omitted.
+     */
+    fun nearestEssentials(origin: LatLng, categories: List<String>): List<Place> = open().use { db ->
+        categories.mapNotNull { category ->
+            db.rawQuery("SELECT $PLACE_COLS FROM place p WHERE p.category = ?", arrayOf(category))
+                .use { readPlaces(it) }
+                .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
+                .minByOrNull { it.distanceKm ?: Double.MAX_VALUE }
         }
     }
 
@@ -216,6 +282,13 @@ class CityDatabase(
     companion object {
         /** The bundled pack shipped in assets — the default active city. */
         const val BUNDLED_PACK = "melbourne.db"
+
+        /**
+         * Bump whenever the bundled pack in assets is rebuilt (new data OR a new column),
+         * so an app update re-installs it over the copy a previous install left behind.
+         * v2 = M6.5's rebuild (adds the `suburb` column + health/fuel/parking).
+         */
+        const val BUNDLED_PACK_VERSION = 2
         private val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
 
         // The place columns every query selects, in the exact order [readPlaces]
