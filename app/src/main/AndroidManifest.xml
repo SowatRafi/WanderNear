@@ -12,6 +12,12 @@
     <!-- Microphone for offline voice input (Vosk); requested in-context on first use. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Download / refresh a city's data pack from the free OSM + Wikipedia APIs,
+         and only refresh when the phone is online. We only ever FETCH public map
+         data here — no user data is ever sent off the device. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Travel Mode: a WHILE-IN-USE location foreground service, started only from
          the user's on-screen toggle and always shown by a visible notification.
          We deliberately do NOT add ACCESS_BACKGROUND_LOCATION — no silent tracking. -->
