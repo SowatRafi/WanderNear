@@ -16,6 +16,15 @@ app/build/
 .idea/
 *.keystore
 
+# --- Claude Code ---
+# Personal, machine-specific settings (permissions, local overrides) — never shared.
+# A committed .claude/settings.json for team-wide settings would still be tracked.
+.claude/settings.local.json
+# Runtime scratch from the ruflo / claude-flow MCP tooling — not part of the app.
+.claude-flow/
+.claude/proven-config.json
+.claude/.proven-config-version
+
 # --- OS junk ---
 .DS_Store
 Thumbs.db
