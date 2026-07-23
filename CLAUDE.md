@@ -108,16 +108,34 @@ never guessed.
   rejection, prompt-injection via data blocked, refuse-on-empty, parser
   correctness), all green. On-device Gemma 4 over the same retrieval, grounded
   and trick-tested; templates remain the guaranteed fallback.
-- **M5 — Voice input** (in progress — M5.1 done: Vosk 0.3.75 offline STT, mic
-  button in the chat input, RECORD_AUDIO requested in-context, transcribe-to-input
-  with a listening state; GPS "near me" was already done in M2.4). The bundled
-  ~40 MB model lives in `app/src/main/resources/` (Java resources), NOT `assets/`,
-  because AAPT2 crashes linking a large asset; it's unzipped once into filesDir
-  and loaded. Remaining: M5.2 polish (live partials, graceful no-speech/denied).
-  Build gotcha hit here: a corrupted Gradle transforms cache made AAPT2 crash on
-  link even for known-good code — fix is `rm -rf ~/.gradle/caches/<ver>/transforms`
-  then rebuild.
-- **M6 — Any city**: "Download data for [city]?" flow + silent background refresh.
+- **M5 — Voice input** ✅ Done. M5.1: Vosk 0.3.75 offline STT, mic button in the
+  chat input, RECORD_AUDIO requested in-context, transcribe-to-input (review-then-
+  send); GPS "near me" was already done in M2.4. The bundled ~40 MB model lives in
+  `app/src/main/resources/` (Java resources), NOT `assets/`, because AAPT2 crashes
+  linking a large asset; it's unzipped once into filesDir and loaded. M5.2 polish
+  done in three verified steps: (1) honest voice states Idle→Preparing→Listening
+  (the slow first load never loses the first words), a gentle "didn't catch that"
+  nudge on silence, and a privacy fix — the mic is released the instant Vosk returns
+  a phrase (it used to keep recording); (2) the emoji mic replaced by inline vector
+  mic/stop icons (no new dependency — deliberately avoids material-icons-extended),
+  a spinner for Preparing and a soft "sonar" pulse for Listening, screen-reader
+  labels + a polite liveRegion, with the pulse living only while listening (no idle
+  frame cost) and respecting the system "remove animations" setting; (3) graceful
+  permission handling — a soft first denial gets a retry hint, a permanent denial
+  opens an AlertDialog offering "Open Settings" (chosen via
+  shouldShowRequestPermissionRationale), rememberSaveable so it survives rotation.
+  Each step was adversarially self-reviewed (multi-agent, findings verified) before
+  commit. Build gotcha hit here: a corrupted Gradle transforms cache made AAPT2
+  crash on link even for known-good code — fix is
+  `rm -rf ~/.gradle/caches/<ver>/transforms` then rebuild.
+- **M6 — Any city + richer pack**: "Download data for [city]?" flow + silent
+  background refresh; plus a City Info card (population/currency/emergency number),
+  a Safety section (police stations), shopping spots, annual festivals, and
+  Call/Directions buttons. (Live/real-time events, "current leaders", and
+  voice-command auto-calling were considered and dropped — not free/offline/
+  groundable, or unsafe to auto-trigger.)
+- **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
+  this" nudge that surfaces unfinished bucket-list items when you return near a place.
 
 ## Travel Journal design (M3)
 

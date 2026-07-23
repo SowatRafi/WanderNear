@@ -16,7 +16,7 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M5.1 done ✅ (14 commits, all pushed)
+## Status: M1–M5.2 done ✅ (19 commits, all pushed)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
@@ -24,11 +24,11 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 | **M2** App + templates + GPS | ✅ | Compose chat + preferences; loads the DB; grounded **templated** recommendations; one-shot GPS "near me" (falls back to CBD); Directions (`geo:` intent) + attribution; honest refusal on no match. **MVP success test passes offline.** |
 | **M3** Travel Journal | ✅ | Private "My Trips" (separate Room `journal.db`): save places, notes, bucket list (todo/done), visit dates, photos (Photo Picker → app-private storage), anniversary reminders (WorkManager) + on-open "you're back nearby" nudge. Edit/delete everywhere with confirm. |
 | **M4** On-device AI | ✅ | **LiteRT-LM 0.14.0 + Gemma 4 E2B** rewords the retrieved rows into warm prose (opt-in, temperature 0). 5-layer anti-hallucination + `GroundingCheck` validator + **16-test** adversarial suite. Template stays the guaranteed fallback. |
-| **M5.1** Voice input | ✅ | **Vosk 0.3.75** offline STT; mic button in chat; transcribe-to-input (review-then-send). Verified end-to-end on device. |
+| **M5** Voice input | ✅ | **Vosk 0.3.75** offline STT; mic button in chat; transcribe-to-input (review-then-send). **M5.2 polish:** honest Idle→Preparing→Listening states + mic released on phrase (privacy); inline vector mic/stop icons + a listening pulse (no new dep, a11y labels, reduced-motion); graceful mic-permission handling with an "Open Settings" recovery. Verified on device. |
 
 ### Remaining
-- **M5.2** — voice polish: live-partial tuning, a clearer first-load "preparing voice" state, nicer listening indicator, graceful no-speech/denied handling.
-- **M6** — any city: "Download data for [city]?" flow (reuse the M1 pipeline) + silent background refresh.
+- **M6** — any city + richer pack: "Download data for [city]?" flow (reuse the M1 pipeline) + silent background refresh; plus City Info (population/currency/emergency number), Safety (police stations), shopping spots, annual festivals, and Call/Directions buttons. (Dropped as not free/offline/groundable or unsafe to auto-trigger: live events, "current leaders", voice-command auto-calling.)
+- **M7** — Travel Journal v2: voice + video memos, and a smarter "you forgot this" bucket-list nudge when you return near a saved place.
 
 ## Tech stack (EXACT pinned versions — don't change casually)
 
@@ -106,6 +106,6 @@ adb shell am start -n com.wandernear/.MainActivity
 ## Verify it's all there (fresh session)
 
 ```powershell
-git log --oneline        # should show 14 commits, latest = M5.1 (e55424a)
+git log --oneline        # should show 19 commits, latest = the M5.2 docs update
 git status               # clean
 ```
