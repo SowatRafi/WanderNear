@@ -46,18 +46,20 @@ object VoiceRecognizer {
      * Starts listening. [onPartial] streams the live guess; [onFinal] gives the
      * finished text (also when [stop] is called); [onFail] reports a problem.
      * Vosk delivers these callbacks on the main thread.
+     * Returns true if listening actually began (false if it couldn't start), so
+     * the caller only shows "Listening…" once the mic is genuinely capturing.
      */
     fun start(
         onPartial: (String) -> Unit,
         onFinal: (String) -> Unit,
         onFail: (String) -> Unit,
-    ) {
+    ): Boolean {
         val loaded = model
         if (loaded == null) {
             onFail("Voice model not ready")
-            return
+            return false
         }
-        try {
+        return try {
             val recognizer = Recognizer(loaded, SAMPLE_RATE)
             val service = SpeechService(recognizer, SAMPLE_RATE)
             service.startListening(object : RecognitionListener {
@@ -83,8 +85,10 @@ object VoiceRecognizer {
                 override fun onTimeout() { /* no-op */ }
             })
             speechService = service
+            true
         } catch (t: Throwable) {
             onFail(t.message ?: "Couldn't start the microphone")
+            false
         }
     }
 

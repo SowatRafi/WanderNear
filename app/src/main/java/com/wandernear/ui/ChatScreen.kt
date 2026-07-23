@@ -83,6 +83,9 @@ private val MELBOURNE_CBD = LatLng(-37.8136, 144.9631)
 private val EXAMPLES = listOf("Vegetarian food", "Temples", "Halal food", "Parks & nature", "Museums")
 
 private enum class Role { User, Assistant }
+// Voice goes through three explicit states so the UI can be honest about what's
+// happening: Idle (not using voice) → Preparing (loading the model) → Listening.
+private enum class VoiceState { Idle, Preparing, Listening }
 private data class RecCard(val place: Place, val reason: String)
 private data class ChatMessage(
     val role: Role,
@@ -106,22 +109,43 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val listState = rememberLazyListState()
 
     // --- Voice input (offline, Vosk) ---
-    var listening by remember { mutableStateOf(false) }
+    // Idle → Preparing (loading the model) → Listening (actually capturing).
+    // Keeping "Preparing" separate means we never show "Listening…" before the
+    // mic is really on, so the user's first words can't be lost during the slow
+    // first-time model load.
+    var voiceState by remember { mutableStateOf(VoiceState.Idle) }
+    // Did Vosk return any words this turn? Lets us nudge gently if the user stops
+    // the mic but nothing was heard, instead of failing silently.
+    var heardSpeech by remember { mutableStateOf(false) }
 
     fun startVoice() {
-        listening = true
+        voiceState = VoiceState.Preparing
         input = ""
+        heardSpeech = false
         scope.launch {
             if (!VoiceRecognizer.ensureModel(context)) {
-                listening = false
+                voiceState = VoiceState.Idle
                 Toast.makeText(context, "Voice model couldn't load", Toast.LENGTH_SHORT).show()
                 return@launch
             }
-            VoiceRecognizer.start(
-                onPartial = { input = it },
-                onFinal = { input = it; listening = false },
-                onFail = { listening = false; Toast.makeText(context, it, Toast.LENGTH_SHORT).show() },
+            val began = VoiceRecognizer.start(
+                onPartial = { input = it; heardSpeech = true },
+                onFinal = { text ->
+                    input = text
+                    heardSpeech = true
+                    VoiceRecognizer.stop()          // release the mic as soon as we have the phrase
+                    voiceState = VoiceState.Idle
+                },
+                onFail = { voiceState = VoiceState.Idle; Toast.makeText(context, it, Toast.LENGTH_SHORT).show() },
             )
+            // Only now are we truly capturing audio.
+            if (voiceState == VoiceState.Preparing) {
+                voiceState = if (began) VoiceState.Listening else VoiceState.Idle
+            } else if (began) {
+                // The user cancelled (typed & sent) while the model was loading —
+                // never leave the mic quietly recording. Privacy first.
+                VoiceRecognizer.stop()
+            }
         }
     }
 
@@ -133,13 +157,21 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     }
 
     fun toggleMic() {
-        if (listening) {
-            VoiceRecognizer.stop()
-            listening = false
-        } else {
-            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-            if (granted) startVoice() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        when (voiceState) {
+            VoiceState.Preparing -> Unit   // busy loading the model — ignore taps
+            VoiceState.Listening -> {
+                VoiceRecognizer.stop()
+                voiceState = VoiceState.Idle
+                // Nothing recognised the whole time → say so, don't fail silently.
+                if (!heardSpeech) {
+                    Toast.makeText(context, "Didn't catch that — tap the mic to try again", Toast.LENGTH_SHORT).show()
+                }
+            }
+            VoiceState.Idle -> {
+                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (granted) startVoice() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
         }
     }
 
@@ -205,7 +237,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     fun ask(text: String) {
         val question = text.trim()
         if (question.isEmpty()) return
-        if (listening) { VoiceRecognizer.stop(); listening = false }   // stop the mic on send
+        if (voiceState == VoiceState.Listening) VoiceRecognizer.stop()   // stop the mic on send
+        voiceState = VoiceState.Idle
         messages += ChatMessage(Role.User, question)
         input = ""
         // On the very first search, request location once so "near me" is real.
@@ -274,7 +307,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
             value = input,
             onValueChange = { input = it },
             onSend = { ask(input) },
-            listening = listening,
+            voiceState = voiceState,
             onMicToggle = { toggleMic() },
         )
     }
@@ -379,9 +412,16 @@ private fun InputBar(
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
-    listening: Boolean,
+    voiceState: VoiceState,
     onMicToggle: () -> Unit,
 ) {
+    val listening = voiceState == VoiceState.Listening
+    // The hint text is our clearest signal of which voice state we're in.
+    val placeholder = when (voiceState) {
+        VoiceState.Preparing -> "Preparing voice…"
+        VoiceState.Listening -> "Listening…"
+        VoiceState.Idle -> "Ask for a place…"
+    }
     Surface(tonalElevation = 3.dp) {
         androidx.compose.foundation.layout.Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -399,7 +439,7 @@ private fun InputBar(
                 value = value,
                 onValueChange = onValueChange,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text(if (listening) "Listening…" else "Ask for a place…") },
+                placeholder = { Text(placeholder) },
                 maxLines = 3,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { onSend() }),
