@@ -3,10 +3,13 @@ package com.wandernear.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.compose.material3.IconButton
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.wandernear.voice.VoiceRecognizer
 import android.content.ActivityNotFoundException
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -31,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -135,6 +140,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // Did Vosk return any words this turn? Lets us nudge gently if the user stops
     // the mic but nothing was heard, instead of failing silently.
     var heardSpeech by remember { mutableStateOf(false) }
+    // Shown only when the mic permission is denied for good — offers a way to Settings.
+    // Saveable so the recovery dialog survives a rotation / dark-mode change mid-read.
+    var showMicSettingsDialog by rememberSaveable { mutableStateOf(false) }
 
     fun startVoice() {
         voiceState = VoiceState.Preparing
@@ -170,8 +178,21 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) startVoice()
-        else Toast.makeText(context, "Microphone permission is needed for voice input", Toast.LENGTH_SHORT).show()
+        if (granted) {
+            startVoice()
+        } else {
+            // If we can still ask again, just explain and let them retry. If not
+            // (permanently denied — the system won't show the dialog anymore), offer
+            // a route into Settings so they aren't stuck with a dead mic button.
+            val activity = context.findActivity()
+            val canAskAgain = activity != null &&
+                ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+            if (canAskAgain) {
+                Toast.makeText(context, "Microphone is needed to speak your search — tap the mic to allow", Toast.LENGTH_SHORT).show()
+            } else {
+                showMicSettingsDialog = true
+            }
+        }
     }
 
     fun toggleMic() {
@@ -291,6 +312,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // Keep the newest message in view.
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    }
+
+    // Recovery path when the microphone has been turned off for good.
+    if (showMicSettingsDialog) {
+        MicPermissionDialog(
+            onOpenSettings = { openAppSettings(context); showMicSettingsDialog = false },
+            onDismiss = { showMicSettingsDialog = false },
+        )
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -571,4 +600,45 @@ private fun openDirections(context: Context, place: Place) {
     } catch (e: ActivityNotFoundException) {
         Toast.makeText(context, "No maps app found on this phone", Toast.LENGTH_SHORT).show()
     }
+}
+
+/** Asks the user to enable the mic in system Settings when it's been denied for good. */
+@Composable
+private fun MicPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Microphone is off") },
+        text = {
+            Text(
+                "Voice input needs microphone access, and it's currently turned off. " +
+                    "Enable it in Settings to speak your searches — you can always type instead.",
+            )
+        },
+        confirmButton = { TextButton(onClick = onOpenSettings) { Text("Open Settings") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now") } },
+    )
+}
+
+/** Opens this app's system settings page, where the user can change permissions. */
+private fun openAppSettings(context: Context) {
+    val intent = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", context.packageName, null),
+    )
+    try {
+        context.startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(context, "Couldn't open settings", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Walks up the Context wrappers to find the hosting Activity — needed to check
+ *  whether we're still allowed to ask for a permission again. */
+private fun Context.findActivity(): Activity? {
+    var ctx: Context = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
