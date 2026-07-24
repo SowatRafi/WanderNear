@@ -16,7 +16,7 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M6.6 + Travel Mode (TM.1–TM.3) + PT.1 + all-faiths worship + personalised home ✅ (all verified on device; M6.6/PT.1/UI pushed; latest local commit `94bd861` — personalization, push after review)
+## Status: M1–M6.6 + Travel Mode (TM.1–TM.3) + PT.1 + all-faiths worship + personalised home ✅ — all verified on device and pushed (latest `d76d01b`)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
@@ -185,9 +185,12 @@ aloud, and every word comes from a retrieved row or an on-device calculation —
 ## Verify it's all there (fresh session)
 
 ```powershell
-git log --oneline        # 38 commits, latest = TM.3 docs (code = 0a22816)
-git status               # clean
+git log --oneline -1     # latest = d76d01b (dedupe + docs); working tree clean
+git status               # clean, all pushed to origin/main
 ```
+Recent commits (newest first): `d76d01b` dedupe home cards + docs · `94bd861` personalised
+home + all-faiths worship · `51893ea` calmer home UI · `4e26059`/`b8d746e` PT.1 prayer times ·
+`3eaf6d6` M6.6 culture + festivals · `7f31b5c`/`0a22816` TM.3 · `0827c8f`/`8a0f505` M6.4d.
 
 > **Note:** a `ruflo` MCP server may be connected in your session (agent/swarm/memory
 > tooling). It's optional — the app is built with native tools + the `ponytail` and
