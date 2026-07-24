@@ -40,6 +40,13 @@ object QueryParser {
         "worship" to "worship", "shrine" to "worship", "synagogue" to "worship",
         "synagogues" to "worship", "gurdwara" to "worship", "gurdwaras" to "worship",
         "pray" to "worship", "prayer" to "worship",
+        // Generic ways people ask for a place of worship without naming a building
+        // type — "religious places", "somewhere spiritual". These pick the category;
+        // the specific faith comes from the query (below) or the saved preference.
+        // ("holy"/"sacred" deliberately left out — they show up in ordinary place
+        // names like "Holy Basil", and would wrongly send a food search to worship.)
+        "religious" to "worship", "religion" to "worship", "faith" to "worship",
+        "spiritual" to "worship",
         "museum" to "attraction", "museums" to "attraction", "gallery" to "attraction",
         "attraction" to "attraction", "attractions" to "attraction", "landmark" to "attraction",
         "monument" to "attraction", "sightseeing" to "attraction",
@@ -76,6 +83,7 @@ object QueryParser {
         "a", "an", "the", "near", "me", "some", "good", "best", "cheap", "nice", "find",
         "show", "want", "looking", "for", "to", "in", "around", "my", "is", "are", "of",
         "and", "or", "place", "places", "spot", "spots", "where", "can", "get", "with", "please",
+        "see", "view", "visit",   // filler verbs — "I want to see…" shouldn't hit the text index
     )
 
     fun parse(text: String, prefs: UserPreferences): SearchSpec {
@@ -103,6 +111,13 @@ object QueryParser {
         // user's plain "food near me" is filtered to vegetarian-friendly places.
         val effectiveDiets = if (category == "food") (diets + prefs.diets) else emptySet()
 
-        return SearchSpec(terms, category, religion, effectiveDiets)
+        // The parallel for faith: a saved faith narrows a worship search to that
+        // faith's places, so a Buddhist asking for "religious places" gets Buddhist
+        // ones — the precision the preference is meant to give. A religion named IN
+        // the query still wins (ask for "churches" and you get churches, whatever
+        // your saved faith); the preference only fills the gap when you didn't say.
+        val effectiveReligion = religion ?: if (category == "worship") prefs.faith.ifBlank { null } else null
+
+        return SearchSpec(terms, category, effectiveReligion, effectiveDiets)
     }
 }

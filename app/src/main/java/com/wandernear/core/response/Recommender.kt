@@ -1,5 +1,6 @@
 package com.wandernear.core.response
 
+import com.wandernear.core.model.Faith
 import com.wandernear.core.model.Place
 import com.wandernear.core.retrieval.SearchSpec
 
@@ -37,7 +38,7 @@ object Recommender {
             parts += it.replace('_', ' ') + "-friendly"
         }
         place.cuisine?.let { parts += it.split(";").first().replace('_', ' ') }
-        if (place.category == "worship") place.religion?.let { parts += "$it place of worship" }
+        if (place.category == "worship") place.religion?.let { parts += "${faithLabel(it)} place of worship" }
         return parts.joinToString(" · ")
     }
 
@@ -66,12 +67,19 @@ object Recommender {
         }
     }
 
+    /** The faith name for a religion key, e.g. "buddhist" → "Buddhist". Falls back to
+     *  a plain capitalisation so an unusual tag is still shown tidily, never raw. */
+    private fun faithLabel(religion: String): String =
+        Faith.fromKey(religion)?.label ?: religion.replaceFirstChar { it.uppercase() }
+
     /** Names the kind of thing being shown, e.g. "vegetarian spots", "temples". */
     private fun describe(spec: SearchSpec): String {
         val diet = spec.diets.joinToString("/") { it.replace('_', ' ') }
         return when (spec.category) {
             "food" -> if (diet.isNotBlank()) "$diet spots" else "food spots"
-            "worship" -> "places of worship"
+            // When a faith is in play (asked for, or from the saved preference) name it,
+            // so the reply reads back the understanding: "Buddhist places of worship".
+            "worship" -> spec.religion?.let { "${faithLabel(it)} places of worship" } ?: "places of worship"
             "attraction" -> "attractions"
             "outdoor" -> "outdoor spots"
             "shopping" -> "shopping spots"

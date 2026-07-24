@@ -46,6 +46,16 @@ class RecommenderTest {
     }
 
     @Test
+    fun reply_worshipWithFaith_readsBackTheFaith() {
+        // The reply should confirm the app understood the preference: name the faith.
+        val temple = place("Quang Minh Temple").copy(category = "worship", religion = "buddhist")
+        val reply = Recommender.reply(
+            SearchSpec(category = "worship", religion = "buddhist"), listOf(temple), nearYou = true,
+        )
+        assertTrue(reply.contains("Buddhist places of worship"))
+    }
+
+    @Test
     fun aiPrompt_listsEveryRetrievedPlace() {
         val places = listOf(place("Akshaya"), place("Mr Ed Coffee & More"))
         val prompt = Recommender.aiPrompt("food", places, nearYou = true)

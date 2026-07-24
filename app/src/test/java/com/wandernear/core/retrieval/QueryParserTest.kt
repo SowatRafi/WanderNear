@@ -77,4 +77,40 @@ class QueryParserTest {
         assertNull(spec.category)          // won't wrongly narrow to a category
         assertTrue(spec.diets.isEmpty())
     }
+
+    @Test
+    fun religiousWordsMapToWorship() {
+        // The reported bug: "religious places" wasn't understood as worship at all.
+        assertEquals("worship", QueryParser.parse("I want to see the religious places", UserPreferences()).category)
+        assertEquals("worship", QueryParser.parse("somewhere spiritual", UserPreferences()).category)
+        assertEquals("worship", QueryParser.parse("faith", UserPreferences()).category)
+    }
+
+    @Test
+    fun savedFaithNarrowsGenericWorship() {
+        // The precision the owner asked for: a Buddhist asking generically for
+        // religious places gets BUDDHIST ones — the parallel of saved-diet → food.
+        val prefs = UserPreferences(faith = "buddhist")
+        val spec = QueryParser.parse("religious places", prefs)
+        assertEquals("worship", spec.category)
+        assertEquals("buddhist", spec.religion)
+        // A plain building-type word (no faith named) also picks up the saved faith.
+        assertEquals("buddhist", QueryParser.parse("temples", prefs).religion)
+    }
+
+    @Test
+    fun religionInQueryBeatsSavedFaith() {
+        // Ask for "churches" while your saved faith is Buddhist → you still get churches.
+        val spec = QueryParser.parse("churches", UserPreferences(faith = "buddhist"))
+        assertEquals("christian", spec.religion)
+    }
+
+    @Test
+    fun savedFaithDoesNotLeakIntoNonWorshipQueries() {
+        // A Buddhist asking for food gets food, not temples — the faith only ever
+        // narrows a worship search, never forces one.
+        val spec = QueryParser.parse("food", UserPreferences(faith = "buddhist"))
+        assertEquals("food", spec.category)
+        assertNull(spec.religion)
+    }
 }

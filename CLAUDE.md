@@ -293,6 +293,16 @@ never guessed.
   chosen interests, diet-filtered for food (`CityDatabase.forYou`). Practical cards (city, daily
   needs) always stay; generic "Worth visiting" + festivals stay below. "What you love" gained
   Shopping + Culture. Nothing invented — every suggestion is a real retrieved row.
+    - **PH.1 — Preferences drive TYPED queries too** ✅ (2026-07-25). Reported bug: with faith set
+      (e.g. Buddhist), asking "I want to see the religious places" showed nothing. Two gaps in
+      `QueryParser` (the one place every query routes through): (1) "religious/religion/faith/
+      spiritual" weren't in the vocabulary, so the phrase became free-text and matched no rows;
+      (2) a saved faith was never used as a filter. Fix mirrors the existing diet→food rule with
+      a faith→worship one: `effectiveReligion = religion ?: (if worship) prefs.faith` — a religion
+      NAMED in the query still wins ("churches" while Buddhist → churches). The reply now reads the
+      understanding back ("Buddhist places of worship"). "holy"/"sacred" deliberately excluded
+      (they appear in place names like "Holy Basil"). Verified on a Pixel 6 (Buddhist → 3 real
+      Buddhist temples) + new JVM tests. Grounded as ever — every card is a real retrieved row.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs
