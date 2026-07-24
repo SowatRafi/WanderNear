@@ -262,6 +262,23 @@ never guessed.
       the service and the home screen share one rule instead of each deriving it. One shared
       `NearbyCard` renders both cards at three lines per entry instead of five, and
       distances read as metres up close, rounded to 10 m (a fix isn't metre-accurate).
+- **PT — Prayer times + mosque awareness** (from the owner's "no guidebook" vision).
+    - **PT.1** ✅ Done. The five daily prayer times, **calculated ON-DEVICE** (offline, free)
+      — `core/prayer/PrayerTimes.kt`, a pure-Kotlin PrayTimes.org port, unit-tested against
+      the INDEPENDENT Aladhan API (Melbourne, ±1 min). Opt-in (off by default), with a
+      method picker (MWL/ISNA/Egypt/Karachi/Umm-al-Qura) + Standard/Hanafi Asr in
+      Preferences. A "Prayer times today" home card shows the times labelled honestly as
+      CALCULATED (the start of each prayer; a mosque may pray later) with the method named,
+      plus the **nearest mosque** (grounded `worship`+`religion=muslim`) and its OSM
+      website/phone so the user confirms the mosque's own **Friday** time — which no free
+      source lists and we never invent. Computes from an in-city fix when we have one, else
+      the city centre + phone timezone. **Owner's original ask was to fetch each mosque's
+      times from its website / Google; researched and declined** — only 1 of 38 Melbourne
+      mosques has any `service_times` tag (and it's blank), scraping mosque sites is fragile +
+      ungrounded (rule #5) and not offline, and there's no free times API. On-device
+      calculation + a link to the mosque's own site is the honest, offline, free path.
+    - **PT.2** (deferred): the proactive "prayer approaching → nearest mosque" nudge riding
+      the single Travel Mode notification (TM.3 pattern), opt-in and quiet.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs

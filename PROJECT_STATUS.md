@@ -16,7 +16,7 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M5 + Travel Mode (TM.1–TM.3) + M6.1–M6.6, M6.4a–d, M6.5 done ✅ (TM.3 pushed `0a22816`; M6.6 code committed locally, pending push)
+## Status: M1–M5 + Travel Mode (TM.1–TM.3) + M6.1–M6.6, M6.4a–d, M6.5 + PT.1 done ✅ (verified on device; M6.6 `3eaf6d6` + PT.1 `b8d746e` committed locally, push next)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
@@ -33,6 +33,7 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 | **M6.4d** Download-a-city UI | ✅ | The real **"Download data for [city]?"** flow, as a **Cities card in Preferences** (temp dev trigger deleted). Radio list of installed packs (names read from each pack's own `city` row) + search → up to 5 real Nominatim **areas** shown with their full display name → confirm dialog → determinate progress + Cancel → auto-switch. `CityPackBuilder.find()` exposes the matches so `build()` takes a **confirmed** `Match` (no blind first-hit, no double geocode). Two bugs caught on-device: Nominatim replying in the place's own language (fixed with `Accept-Language`), and "near you" ranking from a fix 8,147 km outside the pack (fixed by `fixInCity()` → city-centre fallback). Verified on a Pixel 6 (Kyoto = 10,326 places). |
 | **M6.5** Traveller home | ✅ | Home shows your **ACTUAL suburb** (on-device `nearestSuburb` from a new `place.suburb` column, 25 km guard — **no GPS leaves the phone**), a grounded **"Worth visiting nearby"** card, and a **"Daily needs near you"** card (nearest police/hospital/fuel/parking via new `health`/`fuel`/`parking` categories in BOTH the pipeline and the on-device builder). Melbourne rebuilt (22,624 places). A review caught + fixed a GPS-egress (Nominatim reverse-geocode) that violated non-negotiable #1 → reworked fully on-device. Verified on device. |
 | **M6.6** Events & festivals | ✅ | Two generic halves. **`culture` category** (theatre/arts_centre/cinema/community_centre/events_venue/stadium) in BOTH `OsmClassifier` + pipeline → searchable ("theatre"/"live music"/"events"/"festivals"), Melbourne = 832 rows. `sports_centre` removed (gyms/tennis clubs swamped it → "theatres" returned a tennis club). **Annual festivals** into `event` table from **Wikipedia `Category:Festivals in <City>`** (NOT Wikidata — it can't reach the festivals travellers want; see CLAUDE.md), **no dates** stored (`when_text` NULL, card says "Dates change each year"), past-tense articles filtered, rules shared via `core/pack/Festivals.kt`. Melbourne = 22 festivals. New `fetch_festivals.py` step (after build_db). Council open-data researched + dropped (only permits/past events published). Multi-agent review → 4 fixes incl. HIGH Wikipedia 20-extract cap (was dropping Rising + St Kilda Festival) fixed via `continue` token in both fetchers. Bundled pack v3. |
+| **PT.1** Prayer times + mosque | ✅ | The five daily prayers **calculated on-device** (`core/prayer/PrayerTimes.kt`, pure-Kotlin PrayTimes.org port, no Android/network), unit-tested against the **independent Aladhan API** (Melbourne, ±1 min). Opt-in, off by default; method picker (MWL/ISNA/Egypt/Karachi/Umm-al-Qura) + Standard/Hanafi Asr in Preferences. "Prayer times today" home card labels them honestly as **calculated** (start of each prayer) with the method named + **nearest mosque** (grounded worship+muslim) and its OSM website/phone for the mosque's own **Friday** time (no free source lists it → never invented). Computes from an in-city fix, else the city centre + phone tz. **Owner's ask to scrape mosque sites/Google for times was researched + declined** (1/38 mosques has any service_times, blank; not offline/free/groundable). Verified on a Pixel 6. |
 | **TM.3** Around you now | ✅ | While Travel Mode is on: nearest **food / shopping / outdoors** from the active pack, in an "Around you now" card under City Info **and in the ongoing banner itself** — still exactly ONE notification, updated in place, so it can never become a stream of buzzes (only the TM.2 "worth a visit" hit makes a sound). Banner is `VISIBILITY_PRIVATE` + a redacted public version: a locked screen shows Travel Mode is on but not which café you're beside. The screen reads the service's `StateFlow` rather than requesting its own location. `fixInCity`/`categoryLabel`/`distanceLabel` moved to `core/` (unit-tested); one shared `NearbyCard` renders both cards at 3 lines per entry instead of 5; distances in metres up close, rounded to 10 m. Verified on a Pixel 6 in Werribee. |
 
 ### Remaining — agreed order (owner, 2026-07-24)
@@ -67,7 +68,8 @@ app/src/main/
       model/       Place, LatLng, CityInfo, CountryFacts, UserPreferences
       retrieval/   QueryParser (words → SearchSpec)
       response/    Recommender (templates + AI prompt), GroundingCheck (anti-hallucination guard)
-      pack/        OsmClassifier — classify + Overpass query, SHARED by pipeline parity + on-device builder
+      pack/        OsmClassifier + Festivals — classify/query rules SHARED by pipeline parity + on-device builder
+      prayer/      PrayerTimes — on-device prayer-time calculation (PrayTimes.org port, unit-tested)
     data/        CityDatabase (reads the ACTIVE pack; nearestSuburb/nearestEssentials/nearbyNotable),
                  CityPackBuilder (on-device "download a city"), PreferencesRepository (incl. activePack),
                  LocationProvider, journal/ (Room)
@@ -151,12 +153,12 @@ free + offline + **groundable** (rule #5), so nothing here invents a fact.
   stored summary + Directions. Ask-first (never auto-reads). Free, offline, grounded.
 - **Halal/dietary "nearest now"** — ✅ already works: `diet:halal` is in the pack + retrieval.
   Enhancement: a one-tap "nearest halal" from Travel Mode, not just chat.
-- **Prayer-time + nearest mosque** — nearest mosque is ✅ grounded (`worship`, religion=muslim).
-  Prayer TIMES need care: computed on-device from lat/long + date via a standard astronomical
-  formula (e.g. PrayTimes, MIT-licensed) — a CALCULATION, not a fact to invent, and fully
-  offline. Must expose the calc method/madhab (they legitimately differ) rather than assert
-  one true time. No network, no API. **This is the one "agent speaks first" case to design
-  carefully** — it's time-sensitive and personal; opt-in, and quiet.
+- **Prayer-time + nearest mosque** — ✅ **PT.1 DONE** (see the table above): daily times
+  calculated on-device (offline, method-configurable, honest), nearest mosque grounded, the
+  mosque's own website/phone for its Friday time. The owner's ask to fetch times from mosque
+  websites / Google was researched and declined (not offline/free/groundable — 1/38 mosques
+  even has a `service_times` tag, and it's blank). **PT.2** (the proactive "prayer approaching
+  → nearest mosque" nudge riding the single Travel Mode notification) is the remaining half.
 - **Accommodation** — OSM has `tourism=hotel|hostel|guest_house|motel|apartment`. Groundable
   as a new category exactly like `culture`/`shopping`. Free. (Booking/prices are NOT free/
   groundable — show the place + Directions + phone only, never a price or availability.)
