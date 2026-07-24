@@ -204,18 +204,39 @@ never guessed.
       via Nominatim (which leaked the user's GPS off-device — a #1 violation) plus a false
       "suburb in the wrong city" composition; both fixed by going fully on-device with the
       distance guard, off-main-thread location reads, and a fresh-fix requirement for the label.
-    - Remaining: annual festivals (see M6.6 below).
-    - **M6.6 — Events & festivals** (approved 2026-07-24, not started). Free/no-key sources
-      ONLY: **Wikidata** (SPARQL, CC0) for annual/recurring festivals + **Wikipedia REST**
-      (CC BY-SA) for the description, written into the existing `event` table (`when_text`
-      is a human-readable hint, NOT a guaranteed schedule). **Owner-approved exception to
-      non-negotiable #4:** per-city council OPEN DATA feeds (CKAN/Socrata) may also be used,
-      wired through a small **data registry** (a JSON asset mapping `city osm_id → portal
-      type, base URL, dataset id, column map`) read by BOTH the pipeline and the on-device
-      builder — so adding a city is a data row, never code, and a city with no entry still
-      gets Wikidata festivals plus an honest "nothing listed". Licence-gated to CC0/CC-BY,
-      with `summary_url` + `summary_license` stored per event. REJECTED as not free/legal/
-      groundable: scraping event sites, Eventbrite/Ticketmaster/Meetup.
+    - **M6.6 — Events & festivals** ✅ Done. Two halves, both generic for ANY city:
+        - **`culture` category** (theatre / arts_centre / cinema / community_centre /
+          events_venue / stadium) added to BOTH `OsmClassifier` and the Python pipeline —
+          the grounded "where things happen here". `sports_centre` was tried and **removed**:
+          it's gyms and tennis clubs and swamped the category (578 of 1410 rows) so "theatres"
+          answered with a tennis club. Searchable ("theatre", "live music", "events",
+          "festivals" → culture), wired through QueryParser + Recommender ("venues") +
+          `GroundingCheck.VENUE_WORDS`. Melbourne rebuilt → 832 culture rows.
+        - **Annual festivals** into the existing `event` table, from **Wikipedia's
+          `Category:Festivals in <City>`** — NOT Wikidata. *Research finding:* Wikidata can't
+          answer this — its festival items are only reachable by coordinates or "located in",
+          and the ones travellers care about (Melbourne Comedy Festival Q17012417) have
+          neither, so a structured query returns 6 (one defunct) and misses Comedy/Moomba/
+          Fringe; Wikipedia's category returns all 25. **NO DATES** stored (`when_text` NULL):
+          no free source publishes a reliable recurring-festival date (Wikidata's `P837` is
+          empty), so the card says "Dates change each year" instead of guessing. Past-tense
+          articles ("MEL&NYC festival *was*…") are filtered out. Rules shared by pipeline +
+          on-device builder via `core/pack/Festivals.kt`. Melbourne → 22 festivals.
+        - **Owner asked for council open-data too;** researched and **dropped** — Melbourne's
+          portals publish only event *permits 2014-2018* and *past* events 2001-2017, no
+          live "what's on" feed. Not built (the registry would add complexity for zero yield);
+          revisit only if a city with a real dated CC0/CC-BY feed turns up.
+        - **Adversarial review (multi-agent) → fixes:** (1) HIGH — Wikipedia caps EXTRACTS at
+          20/request even though the generator lists all members, so >20-festival cities
+          silently lost their alphabetical tail (Melbourne dropped Rising + St Kilda Festival);
+          fixed by following the `continue` token in BOTH fetchers → 22 not 17. (2) the
+          on-device `summary_url` wasn't URL-encoded (pipeline used `urllib.quote`); fixed with
+          `Uri.encode`. (3) "…and N more" was a dead end → now tap-to-expand. (4) README/status
+          didn't list `fetch_festivals.py`.
+        - **New pipeline step:** `fetch_festivals.py` runs AFTER `build_db.py` (opens the
+          finished pack, fills `event`). Skipping it just leaves no festivals. `CityEvent`
+          model + `CityDatabase.festivals()` + `FestivalsCard`. Bundled pack v3.
+        - **Deferred:** live/dated events (no free groundable source); per-city council feeds.
 - **TM.3 — "Around you now"** ✅ Done. While Travel Mode is on, the nearest **food /
   shopping / outdoors** from the active pack appear in an "Around you now" card under City
   Info, and in the ongoing banner. **The banner Travel Mode already shows IS the digest** —

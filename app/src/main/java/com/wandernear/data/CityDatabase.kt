@@ -3,6 +3,7 @@ package com.wandernear.data
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.wandernear.core.model.CityEvent
 import com.wandernear.core.model.CityInfo
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
@@ -103,6 +104,27 @@ class CityDatabase(
                 country = c.getStringOrNull(1),
                 population = if (c.isNull(2)) null else c.getLong(2),
             )
+        }
+    }
+
+    /**
+     * The city's annual festivals, alphabetically. Empty for a pack built before
+     * festivals existed, or for a city Wikipedia has no festival category for — the
+     * caller then shows nothing at all rather than an empty section or a guess.
+     */
+    fun festivals(limit: Int = 30): List<CityEvent> = open().use { db ->
+        try {
+            db.rawQuery(
+                "SELECT name, summary, summary_url FROM event ORDER BY name LIMIT $limit", null,
+            ).use { c ->
+                val out = ArrayList<CityEvent>(c.count)
+                while (c.moveToNext()) {
+                    out += CityEvent(c.getString(0), c.getStringOrNull(1), c.getStringOrNull(2))
+                }
+                out
+            }
+        } catch (e: Exception) {
+            emptyList()   // an older pack without the table shouldn't break the home screen
         }
     }
 
@@ -314,8 +336,9 @@ class CityDatabase(
          * Bump whenever the bundled pack in assets is rebuilt (new data OR a new column),
          * so an app update re-installs it over the copy a previous install left behind.
          * v2 = M6.5's rebuild (adds the `suburb` column + health/fuel/parking).
+         * v3 = M6.6's rebuild (adds the `culture` category + the city's annual festivals).
          */
-        const val BUNDLED_PACK_VERSION = 2
+        const val BUNDLED_PACK_VERSION = 3
         private val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
 
         // The place columns every query selects, in the exact order [readPlaces]

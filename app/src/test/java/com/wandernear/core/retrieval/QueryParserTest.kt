@@ -49,6 +49,16 @@ class QueryParserTest {
     }
 
     @Test
+    fun detectsCultureVenues() {
+        assertEquals("culture", QueryParser.parse("theatre", UserPreferences()).category)
+        assertEquals("culture", QueryParser.parse("live music", UserPreferences()).category)
+        // "events"/"festival" land on venues too: we can't know what's on tonight, but
+        // we can honestly show the real places it would be on at.
+        assertEquals("culture", QueryParser.parse("events near me", UserPreferences()).category)
+        assertEquals("culture", QueryParser.parse("festivals", UserPreferences()).category)
+    }
+
+    @Test
     fun nonsenseQuery_getsNoFilters() {
         val spec = QueryParser.parse("zxcvbnm", UserPreferences())
         assertNull(spec.category)          // won't wrongly narrow to a category

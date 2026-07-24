@@ -9,7 +9,7 @@ import com.wandernear.core.model.UserPreferences
  */
 data class SearchSpec(
     val ftsTerms: List<String> = emptyList(),
-    val category: String? = null,   // food | worship | attraction | outdoor | shopping | safety
+    val category: String? = null,   // food | worship | attraction | outdoor | shopping | culture | safety
     val religion: String? = null,
     val diets: Set<String> = emptySet(),
 )
@@ -48,6 +48,16 @@ object QueryParser {
         "shopping" to "shopping", "shop" to "shopping", "shops" to "shopping",
         "market" to "shopping", "markets" to "shopping", "mall" to "shopping",
         "malls" to "shopping", "souvenir" to "shopping", "souvenirs" to "shopping",
+        // Culture venues — the grounded "where things happen here". "Event"/"events"
+        // and "festival" land here too: we can't know WHAT is on tonight, but we can
+        // honestly show the real venues it would be on at.
+        "theatre" to "culture", "theater" to "culture", "theatres" to "culture",
+        "cinema" to "culture", "cinemas" to "culture", "movie" to "culture", "movies" to "culture",
+        "show" to "culture", "shows" to "culture", "concert" to "culture", "concerts" to "culture",
+        "music" to "culture", "live" to "culture", "gig" to "culture", "gigs" to "culture",
+        "event" to "culture", "events" to "culture", "festival" to "culture", "festivals" to "culture",
+        "stadium" to "culture", "arena" to "culture", "venue" to "culture", "venues" to "culture",
+        "culture" to "culture", "cultural" to "culture", "entertainment" to "culture",
     )
 
     // Words that pin down a specific religion (so "mosque" → muslim). "temple" is

@@ -81,7 +81,40 @@ class OsmClassifierTest {
         assertTrue(q.contains("""nwr["amenity"="parking"]"""))
         assertTrue(q.contains("""nwr["amenity"="marketplace"]"""))
         assertTrue(q.contains("""nwr["shop"~"^(mall|department_store)${'$'}"]"""))
+        assertTrue(q.contains("""nwr["amenity"~"^(theatre|arts_centre|cinema|community_centre|events_venue)${'$'}"]"""))
+        assertTrue(q.contains("""nwr["leisure"~"^(stadium)${'$'}"]"""))
         assertTrue(q.contains("""relation["route"="hiking"]"""))
         assertTrue(q.contains("out center tags;"))
+    }
+
+    @Test
+    fun `culture venues are classified, and beat a generic attraction tag`() {
+        assertEquals(
+            OsmClassifier.Kind("culture", "theatre"),
+            OsmClassifier.classify(mapOf("amenity" to "theatre")),
+        )
+        assertEquals(
+            OsmClassifier.Kind("culture", "arts_centre"),
+            OsmClassifier.classify(mapOf("amenity" to "arts_centre")),
+        )
+        assertEquals(
+            OsmClassifier.Kind("culture", "stadium"),
+            OsmClassifier.classify(mapOf("leisure" to "stadium")),
+        )
+        // A gym or tennis club is NOT culture — it swamped the category and made
+        // "theatres" answer with a tennis club, so it's deliberately not kept at all.
+        assertNull(OsmClassifier.classify(mapOf("leisure" to "sports_centre")))
+        // A theatre that ALSO carries tourism=attraction is culture: the more
+        // specific fact wins, exactly as in the Python reference.
+        assertEquals(
+            OsmClassifier.Kind("culture", "theatre"),
+            OsmClassifier.classify(mapOf("amenity" to "theatre", "tourism" to "attraction")),
+        )
+        // A park is still outdoor — culture must not swallow leisure values it
+        // doesn't own.
+        assertEquals(
+            OsmClassifier.Kind("outdoor", "park"),
+            OsmClassifier.classify(mapOf("leisure" to "park")),
+        )
     }
 }

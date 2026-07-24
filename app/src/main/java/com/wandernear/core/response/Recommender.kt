@@ -75,6 +75,9 @@ object Recommender {
             "attraction" -> "attractions"
             "outdoor" -> "outdoor spots"
             "shopping" -> "shopping spots"
+            // Venues, not events: we can point at the theatre, not tell you what's on
+            // there tonight — no free source publishes that.
+            "culture" -> "venues"
             else -> "places"
         }
     }

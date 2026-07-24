@@ -15,8 +15,10 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -63,6 +65,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wandernear.core.model.CityEvent
 import com.wandernear.core.model.CityInfo
 import com.wandernear.core.model.CountryFacts
 import com.wandernear.core.model.LatLng
@@ -112,7 +115,10 @@ import kotlinx.coroutines.withContext
 private val MELBOURNE_CBD = LatLng(-37.8136, 144.9631)
 
 // Example prompts shown on the empty screen to help the user get started.
-private val EXAMPLES = listOf("Vegetarian food", "Temples", "Halal food", "Parks & nature", "Museums", "Shopping & markets")
+private val EXAMPLES = listOf(
+    "Vegetarian food", "Temples", "Halal food", "Parks & nature", "Museums",
+    "Shopping & markets", "Theatres & live music",
+)
 
 // Radius for the "worth visiting near you" suggestions — wide enough to surface a
 // few notable spots in a city, ranked nearest-first.
@@ -120,6 +126,10 @@ private const val NEARBY_RADIUS_KM = 15.0
 
 // "Daily needs" categories shown in the essentials card, in display order.
 private val ESSENTIAL_CATEGORIES = listOf("safety", "health", "fuel", "parking")
+
+// How many festivals fit on a card before it stops being readable. The rest are
+// counted honestly ("…and 19 more") rather than silently dropped.
+private const val FESTIVALS_SHOWN = 6
 
 // The on-device suburb is only shown from a fresh fix within this range of the pack,
 // so a stale fix or a fix in another city can never mislabel where you are.
@@ -166,6 +176,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // and grounded "worth visiting near you" suggestions — both loaded below.
     var locality by remember(activePack) { mutableStateOf<String?>(null) }
     var notable by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    // The city's annual festivals (no dates — see FestivalsCard). Pack-wide, not
+    // location-based, so it doesn't depend on having a fix.
+    var festivals by remember(activePack) { mutableStateOf<List<CityEvent>>(emptyList()) }
     // "Around you now" comes from the Travel Mode service's own fixes — the screen never
     // asks for location itself, so Travel Mode stays the one place that watches you.
     // Empty (and the card hidden) whenever Travel Mode is off. Digests carry the pack
@@ -361,6 +374,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         cityCenter = center
         cityInfo = withContext(Dispatchers.IO) { db.cityInfo() }
+        festivals = withContext(Dispatchers.IO) { db.festivals() }
         // Read location off the main thread (binder IPC). A stale fix is fine for
         // ranking; the "you are here" label below uses a FRESH fix only.
         val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
@@ -395,6 +409,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                 essentials = essentials,
                 around = around,
                 notable = notable,
+                festivals = festivals,
+                onOpenUrl = { openUrl(context, it) },
                 onCallEmergency = { openDialer(context, it) },
                 onCall = { openDialer(context, it) },
                 onDirections = { openDirections(context, it) },
@@ -445,6 +461,8 @@ private fun EmptyState(
     essentials: List<Place>,
     around: List<Place>,
     notable: List<Place>,
+    festivals: List<CityEvent>,
+    onOpenUrl: (String) -> Unit,
     onCallEmergency: (String) -> Unit,
     onCall: (String) -> Unit,
     onDirections: (Place) -> Unit,
@@ -485,6 +503,12 @@ private fun EmptyState(
             NearbyCard("Daily needs near you", essentials, onDirections, onCall)
             Spacer(Modifier.height(24.dp))
         }
+        // The city's annual festivals. City-wide rather than distance-ranked, so it sits
+        // below the "near you" cards. Absent when Wikipedia lists none for this city.
+        if (festivals.isNotEmpty()) {
+            FestivalsCard(festivals, onOpenUrl)
+            Spacer(Modifier.height(24.dp))
+        }
         Text("WanderNear", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
@@ -498,6 +522,73 @@ private fun EmptyState(
             EXAMPLES.forEach { example ->
                 AssistChip(onClick = { onExample(example) }, label = { Text(example) })
             }
+        }
+    }
+}
+
+/**
+ * "Annual festivals here": the city's real festivals, each a Wikipedia article stored
+ * in the pack — so the list works offline and can never be invented.
+ *
+ * There are deliberately NO dates. No free source publishes a trustworthy date for a
+ * recurring festival, so rather than guess "usually early November" the card says
+ * outright that dates change each year. Tapping one opens its Wikipedia article, which
+ * is also how we credit CC BY-SA.
+ */
+@Composable
+private fun FestivalsCard(events: List<CityEvent>, onOpen: (String) -> Unit) {
+    // Show a few by default; tap "…and N more" to reveal the rest. The rows are already
+    // in memory, so expanding is free — and without it the app tells you it has N more
+    // festivals with no way to ever see them.
+    var expanded by remember { mutableStateOf(false) }
+    val shown = if (expanded) events else events.take(FESTIVALS_SHOWN)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Annual festivals here", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Dates change each year — check before you go.",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            shown.forEachIndexed { index, event ->
+                if (index > 0) Spacer(Modifier.height(12.dp))
+                val url = event.summaryUrl
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        // Only clickable when we actually have an article to open.
+                        .let { if (url != null) it.clickable { onOpen(url) } else it },
+                ) {
+                    Text(event.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    event.summary?.let { text ->
+                        Text(
+                            if (text.length > 150) text.take(150).trimEnd() + "…" else text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (!expanded && events.size > FESTIVALS_SHOWN) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "…and ${events.size - FESTIVALS_SHOWN} more",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable { expanded = true },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Tap a festival to read about it on Wikipedia (CC BY-SA 4.0).",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -848,6 +939,20 @@ private fun openDirections(context: Context, place: Place) {
 
 /** Opens the phone's dialer pre-filled with a number (never auto-dials — the
  *  user taps call themselves). Used for the local emergency number. */
+/**
+ * Opens a festival's Wikipedia article in the browser. Needs a connection, so it fails
+ * with a toast rather than silently — the offline part (name + summary) is already in
+ * the pack and stays readable either way.
+ */
+private fun openUrl(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+    try {
+        context.startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(context, "No app available to open that link.", Toast.LENGTH_SHORT).show()
+    }
+}
+
 private fun openDialer(context: Context, number: String) {
     try {
         context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")))

@@ -29,6 +29,10 @@ object GroundingCheck {
         // caught the same way food venues are — parity for the new shopping category.
         "mall", "malls", "plaza", "arcade", "emporium", "outlet", "bazaar",
         "department", "store", "stores",
+        // Culture venue markers — same parity for the new culture category, so an
+        // invented theatre or arts centre can't slip through the AI intro either.
+        "theatre", "theater", "cinema", "playhouse", "auditorium", "hall",
+        "arts", "centre", "center", "stadium", "arena", "amphitheatre", "opera",
     )
 
     // Words that are fine to see capitalized without being a place (sentence

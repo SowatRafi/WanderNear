@@ -46,6 +46,17 @@ data class CityInfo(
     val shortName: String get() = name.substringBefore(',').trim()
 }
 
+/**
+ * An annual festival from the pack's `event` table — a real Wikipedia article, never
+ * invented. There is deliberately no date: no free source publishes a trustworthy one
+ * for a recurring festival, so the app says dates change each year instead of guessing.
+ */
+data class CityEvent(
+    val name: String,
+    val summary: String?,
+    val summaryUrl: String?,
+)
+
 /** Straight-line distance between two points in kilometres (haversine formula). */
 fun haversineKm(a: LatLng, b: LatLng): Double {
     val earthRadiusKm = 6371.0

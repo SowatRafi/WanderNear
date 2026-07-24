@@ -26,6 +26,16 @@ object OsmClassifier {
     private val LEISURE = setOf("park", "nature_reserve", "garden", "beach_resort")
     private val SHOPPING = setOf("mall", "department_store")
 
+    // Where a city's events actually happen. Wikidata can name a city's annual
+    // festivals but never says WHEN they run, so these venues are the grounded,
+    // always-true half of "what's on here": the theatre, the arts centre, the
+    // concert hall are real places you can walk to today.
+    private val CULTURE = setOf("theatre", "arts_centre", "cinema", "community_centre", "events_venue")
+    // Stadiums host events; `sports_centre` was tried and removed — it's gyms and tennis
+    // clubs, and it swamped the category (578 of 1410 rows), so asking for theatres
+    // answered with a tennis club.
+    private val CULTURE_LEISURE = setOf("stadium")
+
     /** A place's category + subcategory. Null [classify] result = nothing we recommend. */
     data class Kind(val category: String, val subcategory: String)
 
@@ -55,6 +65,10 @@ object OsmClassifier {
             amenity == "parking" -> Kind("parking", "parking")
             amenity == "marketplace" -> Kind("shopping", "marketplace")
             shop != null && shop in SHOPPING -> Kind("shopping", shop)
+            // Before `tourism`, so a theatre that's also tagged tourism=attraction is
+            // filed as culture — the more specific fact about it.
+            amenity != null && amenity in CULTURE -> Kind("culture", amenity)
+            leisure != null && leisure in CULTURE_LEISURE -> Kind("culture", leisure)
             tourism != null && tourism in TOURISM -> Kind("attraction", tourism)
             historic != null -> Kind("attraction", historic)
             natural != null && natural in NATURAL -> Kind("outdoor", natural)
@@ -99,6 +113,8 @@ object OsmClassifier {
               nwr["amenity"="hospital"](area.a);
               nwr["amenity"="fuel"](area.a);
               nwr["amenity"="parking"](area.a);
+              nwr["amenity"~"^(${re(CULTURE)})${'$'}"](area.a);
+              nwr["leisure"~"^(${re(CULTURE_LEISURE)})${'$'}"](area.a);
               relation["route"="hiking"](area.a);
             );
             out center tags;

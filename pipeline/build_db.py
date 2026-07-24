@@ -25,6 +25,15 @@ LEISURE = {"park", "nature_reserve", "garden", "beach_resort"}
 # on purpose, so we surface real "go shopping here" spots, not every corner store.
 SHOPPING = {"mall", "department_store"}
 
+# Where a city's events actually happen. Wikidata can name a city's annual festivals
+# but never says WHEN they run, so these venues are the grounded, always-true half of
+# "what's on here": the theatre and the arts centre are real places you can walk to.
+# Mirrors core/pack/OsmClassifier.kt — keep the two in step.
+CULTURE = {"theatre", "arts_centre", "cinema", "community_centre", "events_venue"}
+# Stadiums host events; `sports_centre` was tried and removed — it's gyms and tennis
+# clubs, and it swamped the category, so asking for theatres answered with a tennis club.
+CULTURE_LEISURE = {"stadium"}
+
 
 def classify(tags):
     """Decide a place's (category, subcategory) from its OSM tags."""
@@ -45,6 +54,12 @@ def classify(tags):
         return "shopping", "marketplace"
     if tags.get("shop") in SHOPPING:
         return "shopping", tags["shop"]
+    # Before `tourism`, so a theatre also tagged tourism=attraction is filed as
+    # culture — the more specific fact about it.
+    if amenity in CULTURE:
+        return "culture", amenity
+    if tags.get("leisure") in CULTURE_LEISURE:
+        return "culture", tags["leisure"]
     if tags.get("tourism") in TOURISM:
         return "attraction", tags["tourism"]
     if tags.get("historic"):

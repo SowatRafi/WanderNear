@@ -236,7 +236,7 @@ class TravelModeService : Service() {
         // What "around you now" covers. Fuel, parking, police and hospital are left out
         // ON PURPOSE — they're already on the home screen's "Daily needs near you" card,
         // and repeating them would just make the screen longer.
-        private val AROUND_CATEGORIES = listOf("food", "shopping", "outdoor")
+        private val AROUND_CATEGORIES = listOf("food", "shopping", "outdoor", "culture")
         private const val AROUND_RADIUS_KM = 2.0    // "around you" = roughly walkable
 
         /**

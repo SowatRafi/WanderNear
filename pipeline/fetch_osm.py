@@ -114,6 +114,8 @@ area({area_id})->.a;
   nwr["amenity"="hospital"](area.a);
   nwr["amenity"="fuel"](area.a);
   nwr["amenity"="parking"](area.a);
+  nwr["amenity"~"^(theatre|arts_centre|cinema|community_centre|events_venue)$"](area.a);
+  nwr["leisure"~"^(stadium)$"](area.a);
   relation["route"="hiking"](area.a);
 );
 out center tags;

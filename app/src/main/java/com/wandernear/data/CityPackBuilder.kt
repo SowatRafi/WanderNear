@@ -3,7 +3,9 @@ package com.wandernear.data
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.net.Uri
 import android.util.JsonReader
+import com.wandernear.core.pack.Festivals
 import com.wandernear.core.pack.OsmClassifier
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +44,7 @@ object CityPackBuilder {
     // Nominatim + Overpass REQUIRE a descriptive User-Agent (same as the pipeline).
     private const val USER_AGENT = "WanderNear/0.1 (sowat.rafi.98@gmail.com)"
     private const val NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+    private const val WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
     private val OVERPASS_ENDPOINTS = listOf(
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
@@ -261,21 +264,27 @@ object CityPackBuilder {
         val db = SQLiteDatabase.openOrCreateDatabase(dbFile, null)
         try {
             applySchema(context, db)
+            val count: Int
             db.beginTransaction()
             try {
                 insertCity(db, match)
-                val count = connection.inputStream.use { input ->
+                count = connection.inputStream.use { input ->
                     JsonReader(InputStreamReader(input, Charsets.UTF_8)).use { reader ->
                         streamElements(reader, db, onProgress)
                     }
                 }
                 db.setTransactionSuccessful()
-                return count
             } finally {
                 // Always end the transaction: commits if setTransactionSuccessful ran
                 // above, otherwise rolls back — a mid-stream error can't leave it open.
                 db.endTransaction()
             }
+            // Festivals come AFTER the places are safely committed, in their own
+            // transaction. They're a nice-to-have that needs another network call, and a
+            // slow or failed Wikipedia request must never roll back a finished pack.
+            onProgress(0.97f)
+            insertFestivals(db, match.shortLabel)
+            return count
         } finally {
             db.close()
         }
@@ -436,6 +445,72 @@ object CityPackBuilder {
         }
         db.insert("places_fts", null, fts)
         return true
+    }
+
+    /**
+     * Add the city's annual festivals from Wikipedia — the on-device twin of
+     * `pipeline/fetch_festivals.py`, sharing its rules via [Festivals].
+     *
+     * `generator=categorymembers` feeds the category straight into `prop=extracts`, so
+     * one request covers the whole category instead of a call per festival. Wikipedia
+     * caps EXTRACTS at 20 per request even though it lists every member, so we follow
+     * its `continue` token — without that a city with >20 festivals silently loses its
+     * alphabetical tail (Melbourne dropped Rising and the St Kilda Festival).
+     *
+     * `when_text` is left NULL on purpose — see [Festivals] for why no free source can
+     * tell us when a recurring festival runs.
+     */
+    private fun insertFestivals(db: SQLiteDatabase, cityShortName: String) {
+        val base = "$WIKIPEDIA_API?action=query&generator=categorymembers" +
+            "&gcmtitle=${URLEncoder.encode(Festivals.categoryTitle(cityShortName), "UTF-8")}" +
+            "&gcmlimit=${Festivals.MAX}&gcmtype=page" +
+            "&prop=extracts&exintro=1&explaintext=1&exsentences=1&format=json"
+        // title -> summary, merged across continuation pages; a blank never overwrites
+        // a summary a later page supplied.
+        val summaries = LinkedHashMap<String, String>()
+        var cont = ""
+        try {
+            for (round in 0..(1 + Festivals.MAX / 20)) {   // enough rounds to exhaust MAX
+                val body = httpGet(base + cont) ?: break
+                val root = JSONObject(body)
+                val pages = root.optJSONObject("query")?.optJSONObject("pages")
+                if (pages != null) {
+                    for (key in pages.keys()) {
+                        val page = pages.optJSONObject(key) ?: continue
+                        val title = page.optString("title").ifBlank { null } ?: continue
+                        val extract = page.optString("extract").trim()
+                        if (extract.isNotEmpty() || title !in summaries) summaries[title] = extract
+                    }
+                }
+                val next = root.optJSONObject("continue")?.optString("excontinue")?.ifBlank { null }
+                    ?: break                                // no more extracts to fetch
+                cont = "&excontinue=$next&continue=" +
+                    URLEncoder.encode(root.optJSONObject("continue").optString("continue"), "UTF-8")
+            }
+        } catch (e: Exception) {
+            // A malformed response just means fewer festivals; the pack is still good.
+        }
+        writeFestivals(db, summaries)
+    }
+
+    /** Insert the collected festivals, dropping any Wikipedia describes as defunct. */
+    private fun writeFestivals(db: SQLiteDatabase, summaries: Map<String, String>) {
+        for ((title, summary) in summaries) {
+            if (summary.isNotEmpty() && Festivals.isHistorical(summary)) continue   // no longer runs
+            db.insert(
+                "event", null,
+                ContentValues().apply {
+                    put("city_id", 1)
+                    put("name", title)
+                    if (summary.isNotEmpty()) put("summary", summary)
+                    // Encode the path so titles with #, ?, % or non-ASCII resolve (matches
+                    // the pipeline's urllib.quote intent; both open the same article).
+                    put("summary_url", "https://en.wikipedia.org/wiki/" + Uri.encode(title.replace(' ', '_'), "/"))
+                    put("summary_license", "CC BY-SA 4.0")
+                    // when_text + wikidata_qid stay NULL — never guessed.
+                },
+            )
+        }
     }
 
     /** Build a readable address from OSM addr:* tags — mirrors `build_db.address`. */
