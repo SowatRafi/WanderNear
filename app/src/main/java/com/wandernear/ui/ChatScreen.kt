@@ -608,20 +608,28 @@ private fun EmptyState(
             FaithCard(faith, prayerTimes, prayerMethod, worship, onDirections, onCall, onOpenUrl)
             Spacer(Modifier.height(16.dp))
         }
+        // These three cards can surface the same nearby place, so we de-duplicate top to
+        // bottom: a place shown once is never repeated in a card below it.
+        val shown = HashSet<Int>()
         // Travel Mode only: nearest food / shopping / outdoors from the live fix.
         if (around.isNotEmpty()) {
             NearbyCard("Around you now", around, onDirections, onCall)
+            shown += around.map { it.id }
             Spacer(Modifier.height(16.dp))
         }
         // Your picks first: nearby places matching your selected interests. Shown only
         // when you've chosen interests in Preferences.
-        if (forYou.isNotEmpty()) {
-            NotableCard("For you", forYou, onDirections, onSave)
+        val forYouShown = forYou.filterNot { it.id in shown }
+        if (forYouShown.isNotEmpty()) {
+            NotableCard("For you", forYouShown, onDirections, onSave)
+            shown += forYouShown.map { it.id }
             Spacer(Modifier.height(16.dp))
         }
-        // Notable places worth visiting near you. Hidden when the pack has none nearby.
-        if (notable.isNotEmpty()) {
-            NotableCard("Worth visiting nearby", notable, onDirections, onSave)
+        // Notable places worth visiting near you. Hidden when the pack has none nearby
+        // that a card above didn't already show.
+        val notableShown = notable.filterNot { it.id in shown }
+        if (notableShown.isNotEmpty()) {
+            NotableCard("Worth visiting nearby", notableShown, onDirections, onSave)
             Spacer(Modifier.height(16.dp))
         }
         // Nearest police / hospital / fuel / parking. Hidden when the pack has none.

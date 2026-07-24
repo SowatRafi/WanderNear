@@ -16,7 +16,7 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M5 + Travel Mode (TM.1–TM.3) + M6.1–M6.6, M6.4a–d, M6.5 + PT.1 done ✅ (verified on device; M6.6 `3eaf6d6` + PT.1 `b8d746e` committed locally, push next)
+## Status: M1–M6.6 + Travel Mode (TM.1–TM.3) + PT.1 + all-faiths worship + personalised home ✅ (all verified on device; M6.6/PT.1/UI pushed; latest local commit `94bd861` — personalization, push after review)
 
 | Milestone | Status | What it delivered |
 |---|---|---|
@@ -33,6 +33,7 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 | **M6.4d** Download-a-city UI | ✅ | The real **"Download data for [city]?"** flow, as a **Cities card in Preferences** (temp dev trigger deleted). Radio list of installed packs (names read from each pack's own `city` row) + search → up to 5 real Nominatim **areas** shown with their full display name → confirm dialog → determinate progress + Cancel → auto-switch. `CityPackBuilder.find()` exposes the matches so `build()` takes a **confirmed** `Match` (no blind first-hit, no double geocode). Two bugs caught on-device: Nominatim replying in the place's own language (fixed with `Accept-Language`), and "near you" ranking from a fix 8,147 km outside the pack (fixed by `fixInCity()` → city-centre fallback). Verified on a Pixel 6 (Kyoto = 10,326 places). |
 | **M6.5** Traveller home | ✅ | Home shows your **ACTUAL suburb** (on-device `nearestSuburb` from a new `place.suburb` column, 25 km guard — **no GPS leaves the phone**), a grounded **"Worth visiting nearby"** card, and a **"Daily needs near you"** card (nearest police/hospital/fuel/parking via new `health`/`fuel`/`parking` categories in BOTH the pipeline and the on-device builder). Melbourne rebuilt (22,624 places). A review caught + fixed a GPS-egress (Nominatim reverse-geocode) that violated non-negotiable #1 → reworked fully on-device. Verified on device. |
 | **M6.6** Events & festivals | ✅ | Two generic halves. **`culture` category** (theatre/arts_centre/cinema/community_centre/events_venue/stadium) in BOTH `OsmClassifier` + pipeline → searchable ("theatre"/"live music"/"events"/"festivals"), Melbourne = 832 rows. `sports_centre` removed (gyms/tennis clubs swamped it → "theatres" returned a tennis club). **Annual festivals** into `event` table from **Wikipedia `Category:Festivals in <City>`** (NOT Wikidata — it can't reach the festivals travellers want; see CLAUDE.md), **no dates** stored (`when_text` NULL, card says "Dates change each year"), past-tense articles filtered, rules shared via `core/pack/Festivals.kt`. Melbourne = 22 festivals. New `fetch_festivals.py` step (after build_db). Council open-data researched + dropped (only permits/past events published). Multi-agent review → 4 fixes incl. HIGH Wikipedia 20-extract cap (was dropping Rising + St Kilda Festival) fixed via `continue` token in both fetchers. Bundled pack v3. |
+| **PH** Personalised home + all faiths | ✅ | **Home reflects Preferences**: quick-start chips built from your diets + interests + faith (`exampleChips`), and a **"For you"** card of nearby places matching your interests, diet-filtered for food (`CityDatabase.forYou`); practical cards always stay, generic Worth-visiting/festivals below. "What you love" gained Shopping + Culture (emoji labels dropped). **Worship for ALL faiths**: `core/model/Faith.kt` (religion key + place type), a "Faith & worship" picker (`FaithSettingsSection`) replacing the Islam-only prayer toggle, `nearestWorship(religion)`, and `FaithCard` — nearest church/temple/synagogue/gurdwara/mosque with website/phone for service times; **calculated times stay Islam-only** (only faith with a universal astronomical timetable). Verified on a Pixel 6 (Christian→church no times; Muslim→times+mosque). 43 tests. |
 | **PT.1** Prayer times + mosque | ✅ | The five daily prayers **calculated on-device** (`core/prayer/PrayerTimes.kt`, pure-Kotlin PrayTimes.org port, no Android/network), unit-tested against the **independent Aladhan API** (Melbourne, ±1 min). Opt-in, off by default; method picker (MWL/ISNA/Egypt/Karachi/Umm-al-Qura) + Standard/Hanafi Asr in Preferences. "Prayer times today" home card labels them honestly as **calculated** (start of each prayer) with the method named + **nearest mosque** (grounded worship+muslim) and its OSM website/phone for the mosque's own **Friday** time (no free source lists it → never invented). Computes from an in-city fix, else the city centre + phone tz. **Owner's ask to scrape mosque sites/Google for times was researched + declined** (1/38 mosques has any service_times, blank; not offline/free/groundable). Verified on a Pixel 6. |
 | **TM.3** Around you now | ✅ | While Travel Mode is on: nearest **food / shopping / outdoors** from the active pack, in an "Around you now" card under City Info **and in the ongoing banner itself** — still exactly ONE notification, updated in place, so it can never become a stream of buzzes (only the TM.2 "worth a visit" hit makes a sound). Banner is `VISIBILITY_PRIVATE` + a redacted public version: a locked screen shows Travel Mode is on but not which café you're beside. The screen reads the service's `StateFlow` rather than requesting its own location. `fixInCity`/`categoryLabel`/`distanceLabel` moved to `core/` (unit-tested); one shared `NearbyCard` renders both cards at 3 lines per entry instead of 5; distances in metres up close, rounded to 10 m. Verified on a Pixel 6 in Werribee. |
 
@@ -65,7 +66,7 @@ app/src/main/
   resources/vosk-...zip       bundled voice model (40 MB, Java resource)
   java/com/wandernear/
     core/        PURE Kotlin, no Android imports — portable
-      model/       Place, LatLng, CityInfo, CountryFacts, UserPreferences
+      model/       Place, LatLng, CityInfo, CountryFacts, UserPreferences, Faith, CityEvent
       retrieval/   QueryParser (words → SearchSpec)
       response/    Recommender (templates + AI prompt), GroundingCheck (anti-hallucination guard)
       pack/        OsmClassifier + Festivals — classify/query rules SHARED by pipeline parity + on-device builder
@@ -78,8 +79,8 @@ app/src/main/
     reminders/   Notifier + JournalReminders (WorkManager)
     travel/      TravelModeService (WHILE-IN-USE location service + "around you now" digest)
     ui/          ChatScreen (traveller home + chat), PreferencesScreen, MyTripsScreen,
-                 AiSettingsSection, TravelModeSection, CitiesSection (switch/add a city)
-  test/          JVM unit tests (GroundingCheckTest, QueryParserTest, RecommenderTest, OsmClassifierTest)
+                 AiSettingsSection, TravelModeSection, CitiesSection, FaithSettingsSection
+  test/          JVM unit tests (GroundingCheck, QueryParser, Recommender, OsmClassifier, Nearby, Festivals, PrayerTimes)
 CLAUDE.md                     conventions, decisions, milestone log
 PROJECT_STATUS.md             this file
 NEXT_SESSION_PROMPT.md        copy-paste starter prompt for a fresh session

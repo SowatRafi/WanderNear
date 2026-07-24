@@ -279,6 +279,20 @@ never guessed.
       calculation + a link to the mosque's own site is the honest, offline, free path.
     - **PT.2** (deferred): the proactive "prayer approaching → nearest mosque" nudge riding
       the single Travel Mode notification (TM.3 pattern), opt-in and quiet.
+    - **All faiths** ✅ (2026-07-25): the worship feature covers EVERY religion, not just Islam.
+      `core/model/Faith.kt` maps each faith (Muslim/Christian/Hindu/Buddhist/Jewish/Sikh) to its
+      OSM `religion` key + place type. A "Faith & worship" picker replaced the Islam-only prayer
+      toggle; the home shows the **nearest real place of worship** for your faith (church/temple/
+      synagogue/gurdwara/mosque) with its own website/phone for service times — grounded, never
+      invented. `nearestMosque`→`nearestWorship(religion)`; `PrayerCard`→`FaithCard` (calculated
+      **times stay Islam-only** — the only faith with a universal astronomical daily timetable;
+      others show the place only). Melbourne pack has all faiths grounded (Christian 929, …).
+- **PH — Personalised home** ✅ (2026-07-25). The home reflects your Preferences: the quick-start
+  chips are built from your diets + interests + faith (halal+attractions+Christian → "Halal food",
+  "Museums", "Churches"), and a **"For you" card** leads the suggestions — nearby places in your
+  chosen interests, diet-filtered for food (`CityDatabase.forYou`). Practical cards (city, daily
+  needs) always stay; generic "Worth visiting" + festivals stay below. "What you love" gained
+  Shopping + Culture. Nothing invented — every suggestion is a real retrieved row.
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs
