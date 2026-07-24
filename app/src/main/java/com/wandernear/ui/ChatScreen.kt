@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wandernear.core.model.CityEvent
 import com.wandernear.core.model.CityInfo
+import com.wandernear.core.model.Faith
 import com.wandernear.core.model.CountryFacts
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
@@ -117,10 +118,56 @@ import kotlinx.coroutines.withContext
 private val MELBOURNE_CBD = LatLng(-37.8136, 144.9631)
 
 // Example prompts shown on the empty screen to help the user get started.
-private val EXAMPLES = listOf(
+// Shown when you've set no preferences yet — a varied starting set.
+private val DEFAULT_EXAMPLES = listOf(
     "Vegetarian food", "Temples", "Halal food", "Parks & nature", "Museums",
     "Shopping & markets", "Theatres & live music",
 )
+
+/**
+ * The quick-start chips, tailored to your Preferences: your diets, interests and faith
+ * become the suggestions, so the home reflects what you picked. Falls back to
+ * [DEFAULT_EXAMPLES] when you've set nothing. Each chip is a query the parser understands.
+ */
+private fun exampleChips(prefs: UserPreferences): List<String> {
+    val chips = LinkedHashSet<String>()
+    prefs.diets.forEach { d -> dietChip(d)?.let { chips += it } }
+    prefs.interests.forEach { i ->
+        // A diet already implies food, so skip a plain "Food" chip when one is set.
+        if (i == "food" && prefs.diets.isNotEmpty()) return@forEach
+        interestChip(i)?.let { chips += it }
+    }
+    Faith.fromKey(prefs.faith)?.let { chips += faithChip(it) }
+    return if (chips.isEmpty()) DEFAULT_EXAMPLES else chips.toList()
+}
+
+private fun dietChip(diet: String): String? = when (diet) {
+    "halal" -> "Halal food"
+    "vegetarian" -> "Vegetarian food"
+    "vegan" -> "Vegan food"
+    "kosher" -> "Kosher food"
+    "gluten_free" -> "Gluten-free food"
+    else -> null
+}
+
+private fun interestChip(interest: String): String? = when (interest) {
+    "food" -> "Food"
+    "worship" -> "Places of worship"
+    "attraction" -> "Museums"
+    "outdoor" -> "Parks & nature"
+    "shopping" -> "Shopping & markets"
+    "culture" -> "Theatres & live music"
+    else -> null
+}
+
+private fun faithChip(faith: Faith): String = when (faith) {
+    Faith.MUSLIM -> "Mosques"
+    Faith.CHRISTIAN -> "Churches"
+    Faith.JEWISH -> "Synagogues"
+    Faith.HINDU -> "Hindu temples"
+    Faith.BUDDHIST -> "Buddhist temples"
+    Faith.SIKH -> "Gurdwaras"
+}
 
 // Radius for the "worth visiting near you" suggestions — wide enough to surface a
 // few notable spots in a city, ranked nearest-first.
@@ -180,10 +227,13 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // and grounded "worth visiting near you" suggestions — both loaded below.
     var locality by remember(activePack) { mutableStateOf<String?>(null) }
     var notable by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
-    // Today's prayer times (calculated on-device) + the nearest mosque — only when the
-    // user opted in AND we can confirm they're in this city (so the timezone is right).
+    // "For you": nearby places matching the interests you picked in Preferences. Empty
+    // (and the card hidden) when you've selected no interests.
+    var forYou by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    // The nearest place of worship for the user's faith (all faiths), plus — for Islam
+    // only — today's calculated prayer times. Shown only when a faith is picked.
     var prayerTimes by remember(activePack) { mutableStateOf<PrayerTimes.Times?>(null) }
-    var mosque by remember(activePack) { mutableStateOf<Place?>(null) }
+    var worship by remember(activePack) { mutableStateOf<Place?>(null) }
     // The city's annual festivals (no dates — see FestivalsCard). Pack-wide, not
     // location-based, so it doesn't depend on having a fix.
     var festivals by remember(activePack) { mutableStateOf<List<CityEvent>>(emptyList()) }
@@ -395,26 +445,40 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         locality = freshFix?.let { withContext(Dispatchers.IO) { db.nearestSuburb(it, LOCALITY_MAX_KM) } }
     }
 
-    // Prayer times + nearest mosque — its own effect so toggling the setting (or changing
-    // method) updates without needing a pack switch. Shown whenever opted in: from your
-    // real fix when we have one, else the city centre, using the phone's timezone.
+    // Nearest place of worship for the chosen faith, plus Islam's calculated prayer
+    // times — its own effect so changing faith/method updates without a pack switch.
+    // Uses your real fix when we have one, else the city centre + phone timezone.
     // ponytail: a far pack viewed from another timezone with location OFF would use the
     // phone's tz — fine for the normal "I'm in this city" case; a tz-from-coordinates
     // lookup would fix the rare planning-ahead edge.
-    LaunchedEffect(activePack, prefs.prayerEnabled, prefs.prayerMethod, prefs.prayerAsr) {
-        if (!prefs.prayerEnabled) { prayerTimes = null; mosque = null; return@LaunchedEffect }
+    LaunchedEffect(activePack, prefs.faith, prefs.prayerMethod, prefs.prayerAsr) {
+        val faith = Faith.fromKey(prefs.faith)
+        if (faith == null) { prayerTimes = null; worship = null; return@LaunchedEffect }  // no faith picked
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         val here = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center) ?: center
-        if (here == null) { prayerTimes = null; mosque = null; return@LaunchedEffect }  // empty pack
-        val cal = java.util.Calendar.getInstance()
-        val tzHours = java.util.TimeZone.getDefault().getOffset(cal.timeInMillis) / 3_600_000.0  // incl. DST
-        val method = runCatching { PrayerTimes.Method.valueOf(prefs.prayerMethod) }.getOrDefault(PrayerTimes.Method.MWL)
-        val asr = runCatching { PrayerTimes.Asr.valueOf(prefs.prayerAsr) }.getOrDefault(PrayerTimes.Asr.STANDARD)
-        prayerTimes = PrayerTimes.compute(
-            cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH) + 1,
-            cal.get(java.util.Calendar.DAY_OF_MONTH), here.lat, here.lng, tzHours, method, asr,
-        )
-        mosque = withContext(Dispatchers.IO) { db.nearestMosque(here).firstOrNull() }
+        if (here == null) { prayerTimes = null; worship = null; return@LaunchedEffect }  // empty pack
+        worship = withContext(Dispatchers.IO) { db.nearestWorship(here, faith.key).firstOrNull() }
+        // Calculated daily times exist only for Islam; other faiths show the place only.
+        prayerTimes = if (faith == Faith.MUSLIM) {
+            val cal = java.util.Calendar.getInstance()
+            val tzHours = java.util.TimeZone.getDefault().getOffset(cal.timeInMillis) / 3_600_000.0  // incl. DST
+            val method = runCatching { PrayerTimes.Method.valueOf(prefs.prayerMethod) }.getOrDefault(PrayerTimes.Method.MWL)
+            val asr = runCatching { PrayerTimes.Asr.valueOf(prefs.prayerAsr) }.getOrDefault(PrayerTimes.Asr.STANDARD)
+            PrayerTimes.compute(
+                cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH) + 1,
+                cal.get(java.util.Calendar.DAY_OF_MONTH), here.lat, here.lng, tzHours, method, asr,
+            )
+        } else null
+    }
+
+    // "For you" — nearby places in your selected interests. Its own effect so it updates
+    // the moment you change preferences, without needing a pack switch.
+    LaunchedEffect(activePack, prefs.interests, prefs.diets) {
+        if (prefs.interests.isEmpty()) { forYou = emptyList(); return@LaunchedEffect }
+        val center = withContext(Dispatchers.IO) { db.cityCenter() }
+        val origin = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center)
+            ?: center ?: MELBOURNE_CBD
+        forYou = withContext(Dispatchers.IO) { db.forYou(origin, prefs.interests.toList(), prefs.diets) }
     }
 
     // Keep the newest message in view.
@@ -439,10 +503,13 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                 essentials = essentials,
                 around = around,
                 notable = notable,
+                forYou = forYou,
+                examples = exampleChips(prefs),
                 festivals = festivals,
+                faith = Faith.fromKey(prefs.faith),
                 prayerTimes = prayerTimes,
                 prayerMethod = prefs.prayerMethod,
-                mosque = mosque,
+                worship = worship,
                 onOpenUrl = { openUrl(context, it) },
                 onCallEmergency = { openDialer(context, it) },
                 onCall = { openDialer(context, it) },
@@ -494,10 +561,13 @@ private fun EmptyState(
     essentials: List<Place>,
     around: List<Place>,
     notable: List<Place>,
+    forYou: List<Place>,
+    examples: List<String>,
     festivals: List<CityEvent>,
+    faith: Faith?,
     prayerTimes: PrayerTimes.Times?,
     prayerMethod: String,
-    mosque: Place?,
+    worship: Place?,
     onOpenUrl: (String) -> Unit,
     onCallEmergency: (String) -> Unit,
     onCall: (String) -> Unit,
@@ -526,15 +596,16 @@ private fun EmptyState(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            EXAMPLES.forEach { example ->
+            examples.forEach { example ->
                 AssistChip(onClick = { onExample(example) }, label = { Text(example) })
             }
         }
         Spacer(Modifier.height(20.dp))
 
         // Glanceable extras below — each trimmed to stay light; tap through for detail.
-        prayerTimes?.let {
-            PrayerCard(it, prayerMethod, mosque, onDirections, onCall, onOpenUrl)
+        // Faith card: prayer times (Islam) and/or the nearest place of worship.
+        if (faith != null && (prayerTimes != null || worship != null)) {
+            FaithCard(faith, prayerTimes, prayerMethod, worship, onDirections, onCall, onOpenUrl)
             Spacer(Modifier.height(16.dp))
         }
         // Travel Mode only: nearest food / shopping / outdoors from the live fix.
@@ -542,9 +613,15 @@ private fun EmptyState(
             NearbyCard("Around you now", around, onDirections, onCall)
             Spacer(Modifier.height(16.dp))
         }
+        // Your picks first: nearby places matching your selected interests. Shown only
+        // when you've chosen interests in Preferences.
+        if (forYou.isNotEmpty()) {
+            NotableCard("For you", forYou, onDirections, onSave)
+            Spacer(Modifier.height(16.dp))
+        }
         // Notable places worth visiting near you. Hidden when the pack has none nearby.
         if (notable.isNotEmpty()) {
-            NotableCard(notable, onDirections, onSave)
+            NotableCard("Worth visiting nearby", notable, onDirections, onSave)
             Spacer(Modifier.height(16.dp))
         }
         // Nearest police / hospital / fuel / parking. Hidden when the pack has none.
@@ -560,16 +637,17 @@ private fun EmptyState(
 }
 
 /**
- * "Prayer times today": the five daily prayers computed ON-DEVICE (offline, free), plus
- * the nearest mosque. Honest about being CALCULATED — the times mark when a prayer
- * begins, the method used is named, and Friday (set by each mosque) points to the
- * mosque's own website. Every mosque row is a real retrieved place, never invented.
+ * The faith card: for any picked faith, the nearest real place of worship (grounded);
+ * for Islam, also today's ON-DEVICE calculated prayer times. Honest about what's what —
+ * the times are CALCULATED (start of each prayer) with the method named, and the
+ * place's own service/Friday time (which no free source lists) is left to its website.
  */
 @Composable
-private fun PrayerCard(
-    times: PrayerTimes.Times,
+private fun FaithCard(
+    faith: Faith,
+    times: PrayerTimes.Times?,
     methodKey: String,
-    mosque: Place?,
+    place: Place?,
     onDirections: (Place) -> Unit,
     onCall: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
@@ -577,36 +655,43 @@ private fun PrayerCard(
     val method = runCatching { PrayerTimes.Method.valueOf(methodKey) }.getOrNull()
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Prayer times today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            PrayerRow("Fajr", times.fajr)
-            PrayerRow("Sunrise", times.sunrise)
-            PrayerRow("Dhuhr", times.dhuhr)
-            PrayerRow("Asr", times.asr)
-            PrayerRow("Maghrib", times.maghrib)
-            PrayerRow("Isha", times.isha)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Calculated · ${method?.label ?: methodKey}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // Nearest real mosque — grounded. Its Friday time isn't calculable, so we
-            // point the user to the mosque's own website/phone rather than invent one.
-            mosque?.let { m ->
-                Spacer(Modifier.height(12.dp))
-                Text("Nearest mosque", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                val meta = listOfNotNull(m.name, distanceLabel(m.distanceKm)?.let { "$it away" }).joinToString(" · ")
+            // Prayer times: Islam only.
+            times?.let {
+                Text("Prayer times today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                PrayerRow("Fajr", it.fajr)
+                PrayerRow("Sunrise", it.sunrise)
+                PrayerRow("Dhuhr", it.dhuhr)
+                PrayerRow("Asr", it.asr)
+                PrayerRow("Maghrib", it.maghrib)
+                PrayerRow("Isha", it.isha)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Calculated · ${method?.label ?: methodKey}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // Nearest real place of worship for this faith — grounded. Its service time
+            // isn't calculable, so we point to the place's own website/phone, never invent.
+            place?.let { p ->
+                if (times != null) Spacer(Modifier.height(12.dp))
+                Text(
+                    "Nearest ${faith.placeType}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                val meta = listOfNotNull(p.name, distanceLabel(p.distanceKm)?.let { "$it away" }).joinToString(" · ")
                 Text(meta, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 Text(
-                    "Friday time is set by the mosque.",
+                    faith.serviceNote,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onDirections(m) }) { Text("Directions") }
-                    m.phone?.let { p -> TextButton(onClick = { onCall(p) }) { Text("Call") } }
-                    m.website?.let { w -> TextButton(onClick = { onOpenUrl(w) }) { Text("Website") } }
+                    TextButton(onClick = { onDirections(p) }) { Text("Directions") }
+                    p.phone?.let { ph -> TextButton(onClick = { onCall(ph) }) { Text("Call") } }
+                    p.website?.let { w -> TextButton(onClick = { onOpenUrl(w) }) { Text("Website") } }
                 }
             }
         }
@@ -682,15 +767,15 @@ private fun FestivalsCard(events: List<CityEvent>, onOpen: (String) -> Unit) {
 }
 
 /**
- * "Worth visiting nearby": a few grounded travel suggestions — real notable places near
- * you (each a retrieved DB row). Kept glanceable: name + kind + distance only, no
- * Wikipedia paragraph on the home screen. Never invented.
+ * A few grounded place suggestions — real DB rows near you, glanceable (name + kind +
+ * distance, no Wikipedia paragraph). Used for both "Worth visiting nearby" (notable
+ * places) and "For you" (places matching your chosen interests). Never invented.
  */
 @Composable
-private fun NotableCard(places: List<Place>, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
+private fun NotableCard(title: String, places: List<Place>, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Worth visiting nearby", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             // A few, glanceable: name + kind + distance. The full Wikipedia "why" is one
             // tap away in the chat (ask about the place) rather than a paragraph here.

@@ -59,6 +59,19 @@ class QueryParserTest {
     }
 
     @Test
+    fun detectsFaithWorshipChips() {
+        // The faith chips ("Mosques"/"Churches"/…) must resolve to the right religion +
+        // the worship category, so a faith-driven chip searches the right places.
+        val church = QueryParser.parse("Churches", UserPreferences())
+        assertEquals("worship", church.category)
+        assertEquals("christian", church.religion)
+        assertEquals("jewish", QueryParser.parse("Synagogues", UserPreferences()).religion)
+        val gurdwara = QueryParser.parse("Gurdwaras", UserPreferences())
+        assertEquals("worship", gurdwara.category)
+        assertEquals("sikh", gurdwara.religion)
+    }
+
+    @Test
     fun nonsenseQuery_getsNoFilters() {
         val spec = QueryParser.parse("zxcvbnm", UserPreferences())
         assertNull(spec.category)          // won't wrongly narrow to a category

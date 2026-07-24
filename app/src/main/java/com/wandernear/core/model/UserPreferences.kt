@@ -13,7 +13,9 @@ data class UserPreferences(
     val travelStyle: String? = null,          // e.g. "foodie", "culture", "outdoors", "hidden"
     val useAi: Boolean = false,               // reword replies with the on-device AI model
     val travelModeOn: Boolean = false,        // notify about worth-visiting spots near you
-    val prayerEnabled: Boolean = false,       // show today's prayer times + nearest mosque
+    val faith: String = "",                   // OSM religion key (muslim/christian/…); "" = none.
+                                              // Shows the nearest place of worship; Islam also
+                                              // gets today's calculated prayer times.
     val prayerMethod: String = "MWL",         // PrayerTimes.Method name (calc convention)
     val prayerAsr: String = "STANDARD",       // PrayerTimes.Asr name (juristic method)
 )

@@ -38,6 +38,7 @@ object QueryParser {
         "temple" to "worship", "temples" to "worship", "mosque" to "worship",
         "mosques" to "worship", "church" to "worship", "churches" to "worship",
         "worship" to "worship", "shrine" to "worship", "synagogue" to "worship",
+        "synagogues" to "worship", "gurdwara" to "worship", "gurdwaras" to "worship",
         "pray" to "worship", "prayer" to "worship",
         "museum" to "attraction", "museums" to "attraction", "gallery" to "attraction",
         "attraction" to "attraction", "attractions" to "attraction", "landmark" to "attraction",
@@ -65,8 +66,9 @@ object QueryParser {
     private val RELIGION_WORDS = mapOf(
         "mosque" to "muslim", "mosques" to "muslim", "islamic" to "muslim",
         "church" to "christian", "churches" to "christian", "cathedral" to "christian",
-        "synagogue" to "jewish",
+        "synagogue" to "jewish", "synagogues" to "jewish", "jewish" to "jewish",
         "hindu" to "hindu", "buddhist" to "buddhist", "buddhism" to "buddhist",
+        "sikh" to "sikh", "gurdwara" to "sikh", "gurdwaras" to "sikh",
     )
 
     // Common filler words we don't want to full-text search on.

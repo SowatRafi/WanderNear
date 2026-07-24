@@ -32,8 +32,9 @@ private val DIET_OPTIONS = listOf(
     "kosher" to "Kosher", "gluten_free" to "Gluten-free",
 )
 private val INTEREST_OPTIONS = listOf(
-    "food" to "🍽️ Food", "worship" to "🛕 Temples & worship",
-    "attraction" to "🏛️ Attractions", "outdoor" to "🌲 Outdoors",
+    "food" to "Food", "worship" to "Temples & worship",
+    "attraction" to "Attractions", "outdoor" to "Outdoors",
+    "shopping" to "Shopping", "culture" to "Culture & venues",
 )
 private val STYLE_OPTIONS = listOf(
     "foodie" to "Foodie", "culture" to "Culture buff",
@@ -88,7 +89,7 @@ fun PreferencesScreen(repo: PreferencesRepository) {
         TravelModeSection(repo)
 
         Spacer(Modifier.height(24.dp))
-        PrayerSettingsSection(repo)
+        FaithSettingsSection(repo)
     }
 }
 

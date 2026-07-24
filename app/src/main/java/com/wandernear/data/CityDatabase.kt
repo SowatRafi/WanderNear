@@ -258,19 +258,47 @@ class CityDatabase(
     }
 
     /**
-     * The nearest mosques to [origin] — grounded: every row is a real
-     * `amenity=place_of_worship` + `religion=muslim` place from the pack. Each carries
-     * its OSM website/phone (often null), so the caller can point the user to the mosque
-     * itself for its Friday prayer time, which no free source lists. Like [nearbyPolice]
-     * there's no radius cap — the nearest mosque is worth showing even a few km out.
+     * The nearest places of worship of [religion] (an OSM `religion` tag value, e.g.
+     * "muslim", "christian", "hindu") to [origin] — grounded: every row is a real
+     * `amenity=place_of_worship` place from the pack. Each carries its OSM website/phone
+     * (often null), so the caller can point the user to the place itself for its service
+     * or prayer times, which no free source lists. Like [nearbyPolice] there's no radius
+     * cap — the nearest one is worth showing even a few km out.
      */
-    fun nearestMosque(origin: LatLng, limit: Int = 1): List<Place> = open().use { db ->
-        val sql = "SELECT $PLACE_COLS FROM place p WHERE p.category = 'worship' AND p.religion = 'muslim'"
-        db.rawQuery(sql, null).use { readPlaces(it) }
+    fun nearestWorship(origin: LatLng, religion: String, limit: Int = 1): List<Place> = open().use { db ->
+        val sql = "SELECT $PLACE_COLS FROM place p WHERE p.category = 'worship' AND p.religion = ?"
+        db.rawQuery(sql, arrayOf(religion)).use { readPlaces(it) }
             .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
             .sortedBy { it.distanceKm }
             .take(limit)
     }
+
+    /**
+     * "For you": nearby places in the user's chosen interest [categories], nearest first.
+     * [diets] filter only FOOD rows (a halal user's food is halal, but their parks and
+     * museums aren't food-filtered). Grounded — every row is real. Empty when the user
+     * has picked no interests, so the caller simply shows the generic suggestions instead.
+     */
+    fun forYou(origin: LatLng, categories: List<String>, diets: Set<String>, limit: Int = 5): List<Place> =
+        open().use { db ->
+            if (categories.isEmpty()) return@use emptyList()
+            val args = ArrayList<String>()
+            val catPlaceholders = categories.joinToString(",") { "?" }
+            args += categories
+            var sql = "SELECT $PLACE_COLS FROM place p WHERE p.category IN ($catPlaceholders)"
+            if (diets.isNotEmpty()) {
+                val dietPlaceholders = diets.joinToString(",") { "?" }
+                // Apply the diet filter to food rows only; other categories pass through.
+                sql += " AND (p.category != 'food' OR EXISTS (SELECT 1 FROM place_diet d " +
+                    "WHERE d.place_id = p.id AND d.diet IN ($dietPlaceholders) " +
+                    "AND (d.value IS NULL OR d.value != 'no')))"
+                args += diets
+            }
+            db.rawQuery(sql, args.toTypedArray()).use { readPlaces(it) }
+                .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
+                .sortedBy { it.distanceKm }
+                .take(limit)
+        }
 
     /** Runs one search query and reads the rows into [Place] objects. */
     private fun query(db: SQLiteDatabase, spec: SearchSpec, useFts: Boolean): List<Place> {
