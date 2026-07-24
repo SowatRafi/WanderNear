@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -128,9 +129,11 @@ private const val NEARBY_RADIUS_KM = 15.0
 // "Daily needs" categories shown in the essentials card, in display order.
 private val ESSENTIAL_CATEGORIES = listOf("safety", "health", "fuel", "parking")
 
-// How many festivals fit on a card before it stops being readable. The rest are
-// counted honestly ("…and 19 more") rather than silently dropped.
-private const val FESTIVALS_SHOWN = 6
+// How many rows a glanceable card shows before it gets heavy. The rest stay one tap
+// away — festivals via "…and N more", places by asking. Kept small on purpose so the
+// home reads as a light summary, not a wall.
+private const val FESTIVALS_SHOWN = 3
+private const val NOTABLE_SHOWN = 3
 
 // The on-device suburb is only shown from a fresh fix within this range of the pack,
 // so a stale fix or a fix in another city can never mislabel where you are.
@@ -503,64 +506,55 @@ private fun EmptyState(
     modifier: Modifier,
 ) {
     Column(
-        // Scrollable: with the City Info + suggestions + police cards always present,
-        // the welcome text and example chips can sit below the fold on smaller screens
-        // — without this they'd be clipped and unreachable.
-        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        // Scrollable so nothing is ever clipped on a small screen. Left-aligned and
+        // tightly spaced for a calm, glanceable home rather than a wall of cards.
+        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Top,
     ) {
         // Where you are (your actual suburb when we have a fix), plus a one-tap dialer
         // for the local emergency number.
         city?.let {
             CityInfoCard(it, locality, onCallEmergency)
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
         }
-        // Prayer times + nearest mosque, when opted in and you're in this city. Right
-        // under City Info because it's time-of-day critical for those who enabled it.
-        prayerTimes?.let {
-            PrayerCard(it, prayerMethod, mosque, onDirections, onCall, onOpenUrl)
-            Spacer(Modifier.height(24.dp))
-        }
-        // Travel Mode only: the nearest food / shopping / outdoors, refreshed from the
-        // service's own location fixes. Sits right under "where you are" because while
-        // you're out walking it's the most useful thing on the screen. Absent whenever
-        // Travel Mode is off or nothing grounded is in range.
-        if (around.isNotEmpty()) {
-            NearbyCard("Around you now", around, onDirections, onCall)
-            Spacer(Modifier.height(24.dp))
-        }
-        // Grounded travel suggestions: notable places worth visiting near you. Hidden
-        // when the pack has none nearby, so we never show an empty section.
-        if (notable.isNotEmpty()) {
-            NotableCard(notable, onDirections, onSave)
-            Spacer(Modifier.height(24.dp))
-        }
-        // Daily needs near you: nearest police / hospital / fuel / parking. Hidden
-        // entirely when the pack has none, so we never show an empty section.
-        if (essentials.isNotEmpty()) {
-            NearbyCard("Daily needs near you", essentials, onDirections, onCall)
-            Spacer(Modifier.height(24.dp))
-        }
-        // The city's annual festivals. City-wide rather than distance-ranked, so it sits
-        // below the "near you" cards. Absent when Wikipedia lists none for this city.
-        if (festivals.isNotEmpty()) {
-            FestivalsCard(festivals, onOpenUrl)
-            Spacer(Modifier.height(24.dp))
-        }
-        Text("WanderNear", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Tell me what you're into and I'll suggest real local spots — all offline.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(20.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Primary action FIRST: an "ask" app should show what you can ask right away,
+        // not bury the chips under every info card.
+        Text("What are you in the mood for?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(12.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             EXAMPLES.forEach { example ->
                 AssistChip(onClick = { onExample(example) }, label = { Text(example) })
             }
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // Glanceable extras below — each trimmed to stay light; tap through for detail.
+        prayerTimes?.let {
+            PrayerCard(it, prayerMethod, mosque, onDirections, onCall, onOpenUrl)
+            Spacer(Modifier.height(16.dp))
+        }
+        // Travel Mode only: nearest food / shopping / outdoors from the live fix.
+        if (around.isNotEmpty()) {
+            NearbyCard("Around you now", around, onDirections, onCall)
+            Spacer(Modifier.height(16.dp))
+        }
+        // Notable places worth visiting near you. Hidden when the pack has none nearby.
+        if (notable.isNotEmpty()) {
+            NotableCard(notable, onDirections, onSave)
+            Spacer(Modifier.height(16.dp))
+        }
+        // Nearest police / hospital / fuel / parking. Hidden when the pack has none.
+        if (essentials.isNotEmpty()) {
+            NearbyCard("Daily needs near you", essentials, onDirections, onCall)
+            Spacer(Modifier.height(16.dp))
+        }
+        // The city's annual festivals. Absent when Wikipedia lists none for this city.
+        if (festivals.isNotEmpty()) {
+            FestivalsCard(festivals, onOpenUrl)
         }
     }
 }
@@ -591,25 +585,22 @@ private fun PrayerCard(
             PrayerRow("Asr", times.asr)
             PrayerRow("Maghrib", times.maghrib)
             PrayerRow("Isha", times.isha)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
-                "Calculated (${method?.label ?: methodKey}) — the start of each prayer; a mosque " +
-                    "may hold congregation a little later.",
+                "Calculated · ${method?.label ?: methodKey}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             // Nearest real mosque — grounded. Its Friday time isn't calculable, so we
             // point the user to the mosque's own website/phone rather than invent one.
             mosque?.let { m ->
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
                 Text("Nearest mosque", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Text(m.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                distanceLabel(m.distanceKm)?.let {
-                    Text("$it away", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                val meta = listOfNotNull(m.name, distanceLabel(m.distanceKm)?.let { "$it away" }).joinToString(" · ")
+                Text(meta, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 Text(
-                    "Friday prayer is set by the mosque — tap its website or call to confirm.",
-                    style = MaterialTheme.typography.bodySmall,
+                    "Friday time is set by the mosque.",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -656,52 +647,44 @@ private fun FestivalsCard(events: List<CityEvent>, onOpen: (String) -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(10.dp))
+            // Names only — glanceable; tap one to read it on Wikipedia (which also
+            // credits CC BY-SA). No paragraphs on the home screen.
             shown.forEachIndexed { index, event ->
-                if (index > 0) Spacer(Modifier.height(12.dp))
+                if (index > 0) Spacer(Modifier.height(4.dp))
                 val url = event.summaryUrl
-                Column(
-                    Modifier
+                Text(
+                    event.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = if (url != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        // Only clickable when we actually have an article to open.
-                        .let { if (url != null) it.clickable { onOpen(url) } else it },
-                ) {
-                    Text(event.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    event.summary?.let { text ->
-                        Text(
-                            if (text.length > 150) text.take(150).trimEnd() + "…" else text,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                        .heightIn(min = 44.dp)
+                        .let { if (url != null) it.clickable { onOpen(url) } else it }
+                        .wrapContentHeight(),
+                )
             }
             if (!expanded && events.size > FESTIVALS_SHOWN) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     "…and ${events.size - FESTIVALS_SHOWN} more",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clickable { expanded = true },
+                        .heightIn(min = 44.dp)
+                        .clickable { expanded = true }
+                        .wrapContentHeight(),
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Tap a festival to read about it on Wikipedia (CC BY-SA 4.0).",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
 /**
- * "Worth visiting nearby": grounded travel suggestions — real notable places near you
- * (each a retrieved DB row, with its Wikipedia "why" where the pack has one). Never
- * invented; the summary text is real Wikipedia, credited in the footer.
+ * "Worth visiting nearby": a few grounded travel suggestions — real notable places near
+ * you (each a retrieved DB row). Kept glanceable: name + kind + distance only, no
+ * Wikipedia paragraph on the home screen. Never invented.
  */
 @Composable
 private fun NotableCard(places: List<Place>, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
@@ -709,20 +692,16 @@ private fun NotableCard(places: List<Place>, onDirections: (Place) -> Unit, onSa
         Column(Modifier.padding(16.dp)) {
             Text("Worth visiting nearby", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            places.forEachIndexed { index, place ->
-                if (index > 0) Spacer(Modifier.height(14.dp))
+            // A few, glanceable: name + kind + distance. The full Wikipedia "why" is one
+            // tap away in the chat (ask about the place) rather than a paragraph here.
+            places.take(NOTABLE_SHOWN).forEachIndexed { index, place ->
+                if (index > 0) Spacer(Modifier.height(12.dp))
                 Text(place.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 val sub = place.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }
                 val dist = distanceLabel(place.distanceKm)?.let { "$it away" }
                 val meta = listOfNotNull(sub, dist).joinToString(" · ")
                 if (meta.isNotBlank()) {
                     Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                // The real Wikipedia "why", trimmed — only shown when the pack has one.
-                place.summary?.let { s ->
-                    Spacer(Modifier.height(2.dp))
-                    val why = s.trim().let { if (it.length > 160) it.take(160).trimEnd() + "…" else it }
-                    Text(why, style = MaterialTheme.typography.bodySmall)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { onDirections(place) }) { Text("Directions") }
