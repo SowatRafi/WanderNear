@@ -27,6 +27,9 @@ class PreferencesRepository(private val context: Context) {
         val USE_AI = booleanPreferencesKey("use_ai")
         val TRAVEL_MODE_ON = booleanPreferencesKey("travel_mode_on")
         val ACTIVE_PACK = stringPreferencesKey("active_pack")
+        val PRAYER_ENABLED = booleanPreferencesKey("prayer_enabled")
+        val PRAYER_METHOD = stringPreferencesKey("prayer_method")
+        val PRAYER_ASR = stringPreferencesKey("prayer_asr")
     }
 
     /**
@@ -51,6 +54,9 @@ class PreferencesRepository(private val context: Context) {
             travelStyle = prefs[Keys.TRAVEL_STYLE],
             useAi = prefs[Keys.USE_AI] ?: false,
             travelModeOn = prefs[Keys.TRAVEL_MODE_ON] ?: false,
+            prayerEnabled = prefs[Keys.PRAYER_ENABLED] ?: false,
+            prayerMethod = prefs[Keys.PRAYER_METHOD] ?: "MWL",
+            prayerAsr = prefs[Keys.PRAYER_ASR] ?: "STANDARD",
         )
     }
 
@@ -74,5 +80,17 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setTravelMode(value: Boolean) {
         context.dataStore.edit { it[Keys.TRAVEL_MODE_ON] = value }
+    }
+
+    suspend fun setPrayerEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.PRAYER_ENABLED] = value }
+    }
+
+    suspend fun setPrayerMethod(value: String) {
+        context.dataStore.edit { it[Keys.PRAYER_METHOD] = value }
+    }
+
+    suspend fun setPrayerAsr(value: String) {
+        context.dataStore.edit { it[Keys.PRAYER_ASR] = value }
     }
 }

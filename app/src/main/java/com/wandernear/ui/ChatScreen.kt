@@ -74,6 +74,7 @@ import com.wandernear.core.model.UserPreferences
 import com.wandernear.core.model.categoryLabel
 import com.wandernear.core.model.distanceLabel
 import com.wandernear.core.model.fixInCity
+import com.wandernear.core.prayer.PrayerTimes
 import com.wandernear.travel.TravelModeService
 import com.wandernear.core.response.GroundingCheck
 import com.wandernear.core.response.Recommender
@@ -176,6 +177,10 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // and grounded "worth visiting near you" suggestions — both loaded below.
     var locality by remember(activePack) { mutableStateOf<String?>(null) }
     var notable by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    // Today's prayer times (calculated on-device) + the nearest mosque — only when the
+    // user opted in AND we can confirm they're in this city (so the timezone is right).
+    var prayerTimes by remember(activePack) { mutableStateOf<PrayerTimes.Times?>(null) }
+    var mosque by remember(activePack) { mutableStateOf<Place?>(null) }
     // The city's annual festivals (no dates — see FestivalsCard). Pack-wide, not
     // location-based, so it doesn't depend on having a fix.
     var festivals by remember(activePack) { mutableStateOf<List<CityEvent>>(emptyList()) }
@@ -387,6 +392,28 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         locality = freshFix?.let { withContext(Dispatchers.IO) { db.nearestSuburb(it, LOCALITY_MAX_KM) } }
     }
 
+    // Prayer times + nearest mosque — its own effect so toggling the setting (or changing
+    // method) updates without needing a pack switch. Shown whenever opted in: from your
+    // real fix when we have one, else the city centre, using the phone's timezone.
+    // ponytail: a far pack viewed from another timezone with location OFF would use the
+    // phone's tz — fine for the normal "I'm in this city" case; a tz-from-coordinates
+    // lookup would fix the rare planning-ahead edge.
+    LaunchedEffect(activePack, prefs.prayerEnabled, prefs.prayerMethod, prefs.prayerAsr) {
+        if (!prefs.prayerEnabled) { prayerTimes = null; mosque = null; return@LaunchedEffect }
+        val center = withContext(Dispatchers.IO) { db.cityCenter() }
+        val here = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center) ?: center
+        if (here == null) { prayerTimes = null; mosque = null; return@LaunchedEffect }  // empty pack
+        val cal = java.util.Calendar.getInstance()
+        val tzHours = java.util.TimeZone.getDefault().getOffset(cal.timeInMillis) / 3_600_000.0  // incl. DST
+        val method = runCatching { PrayerTimes.Method.valueOf(prefs.prayerMethod) }.getOrDefault(PrayerTimes.Method.MWL)
+        val asr = runCatching { PrayerTimes.Asr.valueOf(prefs.prayerAsr) }.getOrDefault(PrayerTimes.Asr.STANDARD)
+        prayerTimes = PrayerTimes.compute(
+            cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH) + 1,
+            cal.get(java.util.Calendar.DAY_OF_MONTH), here.lat, here.lng, tzHours, method, asr,
+        )
+        mosque = withContext(Dispatchers.IO) { db.nearestMosque(here).firstOrNull() }
+    }
+
     // Keep the newest message in view.
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
@@ -410,6 +437,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                 around = around,
                 notable = notable,
                 festivals = festivals,
+                prayerTimes = prayerTimes,
+                prayerMethod = prefs.prayerMethod,
+                mosque = mosque,
                 onOpenUrl = { openUrl(context, it) },
                 onCallEmergency = { openDialer(context, it) },
                 onCall = { openDialer(context, it) },
@@ -462,6 +492,9 @@ private fun EmptyState(
     around: List<Place>,
     notable: List<Place>,
     festivals: List<CityEvent>,
+    prayerTimes: PrayerTimes.Times?,
+    prayerMethod: String,
+    mosque: Place?,
     onOpenUrl: (String) -> Unit,
     onCallEmergency: (String) -> Unit,
     onCall: (String) -> Unit,
@@ -481,6 +514,12 @@ private fun EmptyState(
         // for the local emergency number.
         city?.let {
             CityInfoCard(it, locality, onCallEmergency)
+            Spacer(Modifier.height(24.dp))
+        }
+        // Prayer times + nearest mosque, when opted in and you're in this city. Right
+        // under City Info because it's time-of-day critical for those who enabled it.
+        prayerTimes?.let {
+            PrayerCard(it, prayerMethod, mosque, onDirections, onCall, onOpenUrl)
             Spacer(Modifier.height(24.dp))
         }
         // Travel Mode only: the nearest food / shopping / outdoors, refreshed from the
@@ -523,6 +562,72 @@ private fun EmptyState(
                 AssistChip(onClick = { onExample(example) }, label = { Text(example) })
             }
         }
+    }
+}
+
+/**
+ * "Prayer times today": the five daily prayers computed ON-DEVICE (offline, free), plus
+ * the nearest mosque. Honest about being CALCULATED — the times mark when a prayer
+ * begins, the method used is named, and Friday (set by each mosque) points to the
+ * mosque's own website. Every mosque row is a real retrieved place, never invented.
+ */
+@Composable
+private fun PrayerCard(
+    times: PrayerTimes.Times,
+    methodKey: String,
+    mosque: Place?,
+    onDirections: (Place) -> Unit,
+    onCall: (String) -> Unit,
+    onOpenUrl: (String) -> Unit,
+) {
+    val method = runCatching { PrayerTimes.Method.valueOf(methodKey) }.getOrNull()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Prayer times today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            PrayerRow("Fajr", times.fajr)
+            PrayerRow("Sunrise", times.sunrise)
+            PrayerRow("Dhuhr", times.dhuhr)
+            PrayerRow("Asr", times.asr)
+            PrayerRow("Maghrib", times.maghrib)
+            PrayerRow("Isha", times.isha)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Calculated (${method?.label ?: methodKey}) — the start of each prayer; a mosque " +
+                    "may hold congregation a little later.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // Nearest real mosque — grounded. Its Friday time isn't calculable, so we
+            // point the user to the mosque's own website/phone rather than invent one.
+            mosque?.let { m ->
+                Spacer(Modifier.height(14.dp))
+                Text("Nearest mosque", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(m.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                distanceLabel(m.distanceKm)?.let {
+                    Text("$it away", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(
+                    "Friday prayer is set by the mosque — tap its website or call to confirm.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onDirections(m) }) { Text("Directions") }
+                    m.phone?.let { p -> TextButton(onClick = { onCall(p) }) { Text("Call") } }
+                    m.website?.let { w -> TextButton(onClick = { onOpenUrl(w) }) { Text("Website") } }
+                }
+            }
+        }
+    }
+}
+
+/** One "Fajr    05:56" line in the prayer card. */
+@Composable
+private fun PrayerRow(name: String, hour: Double) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(104.dp))
+        Text(PrayerTimes.format(hour), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -945,7 +1050,10 @@ private fun openDirections(context: Context, place: Place) {
  * the pack and stays readable either way.
  */
 private fun openUrl(context: Context, url: String) {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+    // OSM website tags are sometimes schemeless ("www.example.org"); Uri.parse would
+    // treat that as a relative link. Default to https so the browser opens it properly.
+    val full = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(full))
     try {
         context.startActivity(intent)
     } catch (e: ActivityNotFoundException) {

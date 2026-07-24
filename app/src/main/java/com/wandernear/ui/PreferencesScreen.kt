@@ -86,6 +86,9 @@ fun PreferencesScreen(repo: PreferencesRepository) {
 
         Spacer(Modifier.height(24.dp))
         TravelModeSection(repo)
+
+        Spacer(Modifier.height(24.dp))
+        PrayerSettingsSection(repo)
     }
 }
 

@@ -257,6 +257,21 @@ class CityDatabase(
             .take(limit)
     }
 
+    /**
+     * The nearest mosques to [origin] — grounded: every row is a real
+     * `amenity=place_of_worship` + `religion=muslim` place from the pack. Each carries
+     * its OSM website/phone (often null), so the caller can point the user to the mosque
+     * itself for its Friday prayer time, which no free source lists. Like [nearbyPolice]
+     * there's no radius cap — the nearest mosque is worth showing even a few km out.
+     */
+    fun nearestMosque(origin: LatLng, limit: Int = 1): List<Place> = open().use { db ->
+        val sql = "SELECT $PLACE_COLS FROM place p WHERE p.category = 'worship' AND p.religion = 'muslim'"
+        db.rawQuery(sql, null).use { readPlaces(it) }
+            .map { it.copy(distanceKm = haversineKm(origin, LatLng(it.lat, it.lng))) }
+            .sortedBy { it.distanceKm }
+            .take(limit)
+    }
+
     /** Runs one search query and reads the rows into [Place] objects. */
     private fun query(db: SQLiteDatabase, spec: SearchSpec, useFts: Boolean): List<Place> {
         val where = mutableListOf<String>()
@@ -304,6 +319,7 @@ class CityDatabase(
                 religion = c.getStringOrNull(8),
                 summary = c.getStringOrNull(9),
                 phone = c.getStringOrNull(10),
+                website = c.getStringOrNull(11),
             )
         }
         return out
@@ -342,8 +358,8 @@ class CityDatabase(
         private val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
 
         // The place columns every query selects, in the exact order [readPlaces]
-        // reads them (index 0..10). Kept in one place so the order can never drift.
+        // reads them (index 0..11). Kept in one place so the order can never drift.
         private const val PLACE_COLS = "p.id, p.name, p.category, p.subcategory, p.lat, p.lng, " +
-            "p.address, p.cuisine, p.religion, p.summary, p.phone"
+            "p.address, p.cuisine, p.religion, p.summary, p.phone, p.website"
     }
 }
