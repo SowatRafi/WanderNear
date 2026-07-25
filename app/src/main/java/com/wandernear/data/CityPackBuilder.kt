@@ -56,6 +56,19 @@ object CityPackBuilder {
     /** Downloaded packs live here, separate from the bundled `melbourne.db`. */
     fun packsDir(context: Context): File = File(context.filesDir, "packs").apply { mkdirs() }
 
+    /**
+     * Delete a DOWNLOADED pack (and its SQLite journal/wal/shm sidecars). ONLY packs
+     * under `packs/` can be removed — never the bundled city, which stays as the
+     * guaranteed offline fallback. Resolving the file inside [packsDir] also stops a
+     * stray name from ever pointing outside it. Returns true if the pack is gone after.
+     */
+    fun deleteInstalled(context: Context, packName: String): Boolean {
+        if (!packName.startsWith("packs/")) return false
+        val file = File(packsDir(context), File(packName).name)
+        deletePack(file)
+        return !file.exists()
+    }
+
     /** Outcome of a build: the finished pack + counts, or a friendly error message. */
     sealed interface Result {
         data class Success(val file: File, val cityName: String, val placeCount: Int) : Result

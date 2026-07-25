@@ -16,8 +16,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -92,6 +95,8 @@ fun CitiesSection(repo: PreferencesRepository) {
     var isError by remember { mutableStateOf(false) }
     // The match awaiting the "Download data for …?" confirmation, if any.
     var confirming by remember { mutableStateOf<CityPackBuilder.Match?>(null) }
+    // The installed pack awaiting a "Delete …?" confirmation, if any.
+    var deleting by remember { mutableStateOf<InstalledPack?>(null) }
     // Non-null only while a build runs — it doubles as "are we building?".
     var progress by remember { mutableStateOf<Float?>(null) }
     var buildJob by remember { mutableStateOf<Job?>(null) }
@@ -181,7 +186,13 @@ fun CitiesSection(repo: PreferencesRepository) {
                         // isn't a second, smaller target announced separately.
                         RadioButton(selected = selected, onClick = null, enabled = !building)
                         Spacer(Modifier.width(8.dp))
-                        Text(pack.label, style = MaterialTheme.typography.bodyMedium)
+                        Text(pack.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        // Downloaded packs can be removed; the bundled city can't (it's the fallback).
+                        if (pack.packName != CityDatabase.BUNDLED_PACK) {
+                            IconButton(onClick = { deleting = pack }, enabled = !building) {
+                                Icon(Icons.Outlined.Delete, "Delete ${pack.label}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
@@ -290,6 +301,31 @@ fun CitiesSection(repo: PreferencesRepository) {
             dismissButton = {
                 TextButton(onClick = { confirming = null }) { Text("Cancel") }
             },
+        )
+    }
+
+    // Confirm removing a downloaded city's offline data.
+    deleting?.let { pack ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("Delete ${pack.label}?") },
+            text = { Text("Its offline data will be removed from this phone. You can download it again any time.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pk = pack
+                    deleting = null
+                    scope.launch {
+                        // If it's the active city, fall back to the bundled one before removing,
+                        // so the app is never left pointing at a pack that no longer exists.
+                        if (pk.packName == activePack) repo.setActivePack(CityDatabase.BUNDLED_PACK)
+                        withContext(Dispatchers.IO) { CityPackBuilder.deleteInstalled(context, pk.packName) }
+                        installed = withContext(Dispatchers.IO) { installedPacks(context) }
+                        message = "${pk.label} removed."
+                        isError = false
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
         )
     }
 }

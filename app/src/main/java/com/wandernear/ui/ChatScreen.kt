@@ -186,6 +186,16 @@ private fun faithChip(faith: Faith): String = when (faith) {
     Faith.SIKH -> "Gurdwaras"
 }
 
+/** A warm, time-of-day greeting for the home hero — a buddy saying hi. */
+private fun greeting(): String {
+    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    return when {
+        hour < 12 -> "Good morning"
+        hour < 17 -> "Good afternoon"
+        else -> "Good evening"
+    }
+}
+
 // Radius for the "worth visiting near you" suggestions — wide enough to surface a
 // few notable spots in a city, ranked nearest-first.
 private const val NEARBY_RADIUS_KM = 15.0
@@ -885,19 +895,26 @@ private fun HomeHeader(city: CityInfo, locality: String?, onCallEmergency: (Stri
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
     ) {
         Column(Modifier.padding(22.dp)) {
+            // A warm, time-aware greeting instead of a clinical "WHERE YOU ARE" label —
+            // the app opens like a friend saying hi.
+            Text(
+                remember { greeting() },
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
+            )
+            Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.LocationOn, null, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("WHERE YOU ARE", style = MaterialTheme.typography.labelMedium)
+                Icon(Icons.Filled.LocationOn, null, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(title, style = MaterialTheme.typography.headlineMedium)
             }
-            Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.headlineMedium)
             subtitle?.let {
                 Spacer(Modifier.height(2.dp))
                 Text(
                     it,
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                    modifier = Modifier.padding(start = 30.dp),
                 )
             }
             if (facts != null || (here == null && city.population != null)) {
