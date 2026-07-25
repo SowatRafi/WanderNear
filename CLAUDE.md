@@ -109,8 +109,21 @@ never guessed.
       (Conquest Drive/Mulberry Terrace/Kelly Park…) reworded by on-device Gemma,
       grounding-checked, with Directions/Save cards. `CityDatabase` seeding is now
       file-based (a fresh install has no city; "Add built-in Melbourne" copies the
-      5 MB asset on demand, offline — verified it persists). Remaining: **L2**
-      live home cards, **L3** offline-fallback polish + optional-download UX.
+      5 MB asset on demand, offline — verified it persists).
+    - **L2** ✅ Done: the whole HOME reflects the live area when online (not just
+      chat). ONE Overpass fetch (`LiveSource.places` over `homeCategories` =
+      daily-needs + attractions + your interests + worship) feeds every card:
+      hero + City Info come straight from the `ActiveArea` (name/country →
+      `CountryFacts` currency+emergency; population from Nominatim), and
+      essentials / worth-visiting / for-you / worship all DERIVE from that single
+      fetch (no per-card calls); prayer times still computed on-device. The three
+      home effects branch live vs. pack. Verified on a Pixel 6: Werribee home =
+      "Good morning / Werribee / Australia / pop 50,027 / AUD / Emergency 000",
+      live Daily needs (Werribee Police 1.7 km w/ Call, Mercy Hospital, UGO fuel
+      440 m, Station Parking 260 m), live For-you (Wyndham Art Gallery, Werribee
+      Manor Ruins…) + Worth-visiting — all real OSM, ranked on-device. Remaining:
+      **L3** offline-fallback polish (prefer a downloaded pack matching the area;
+      an "offline — connect/download" state) + finalize the optional-download UX.
 - **M1 — Data pipeline** ✅ Done: Melbourne fetched from OSM + Wikipedia into
   SQLite (`pipeline/`) — 20,092 places + full-text search; proven with
   "halal restaurants", "temples", "vegetarian near me".

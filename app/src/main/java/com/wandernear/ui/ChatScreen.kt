@@ -200,6 +200,28 @@ private fun greeting(): String {
     }
 }
 
+/**
+ * The categories the LIVE home needs in ONE Overpass fetch: daily-needs + attractions +
+ * your chosen interests + (when a faith is set) worship. Every card on the home derives
+ * from a single fetch of these, so the whole home costs one network call, not one per card.
+ * ponytail: for a very large area this fetches a lot; fine for the town/suburb you're in.
+ */
+private fun homeCategories(prefs: UserPreferences): List<String> =
+    (ESSENTIAL_CATEGORIES + "attraction" + prefs.interests +
+        (if (prefs.faith.isNotBlank()) listOf("worship") else emptyList())).distinct()
+
+/** Today's five prayer times, computed ON-DEVICE from [here] + the phone's timezone. */
+private fun computePrayerTimes(here: LatLng, prefs: UserPreferences): PrayerTimes.Times {
+    val cal = java.util.Calendar.getInstance()
+    val tzHours = java.util.TimeZone.getDefault().getOffset(cal.timeInMillis) / 3_600_000.0  // incl. DST
+    val method = runCatching { PrayerTimes.Method.valueOf(prefs.prayerMethod) }.getOrDefault(PrayerTimes.Method.MWL)
+    val asr = runCatching { PrayerTimes.Asr.valueOf(prefs.prayerAsr) }.getOrDefault(PrayerTimes.Asr.STANDARD)
+    return PrayerTimes.compute(
+        cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH) + 1,
+        cal.get(java.util.Calendar.DAY_OF_MONTH), here.lat, here.lng, tzHours, method, asr,
+    )
+}
+
 // Radius for the "worth visiting near you" suggestions — wide enough to surface a
 // few notable spots in a city, ranked nearest-first.
 private const val NEARBY_RADIUS_KM = 15.0
@@ -268,6 +290,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     // and grounded "worth visiting near you" suggestions — both loaded below.
     var locality by remember(activePack) { mutableStateOf<String?>(null) }
     var notable by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    // The ONE broad live fetch the home derives from (daily needs, worth-visiting, for-you,
+    // worship) when online with an area set. Null = not live → the pack path fills the cards.
+    var liveHome by remember(activePack, activeArea, cityEpoch) { mutableStateOf<List<Place>?>(null) }
     // "For you": nearby places matching the interests you picked in Preferences. Empty
     // (and the card hidden) when you've selected no interests.
     var forYou by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
@@ -495,14 +520,37 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         }
     }
 
-    // Load the active city's facts + centre + nearest police, off the main thread,
-    // and RELOAD whenever the active pack changes (a download or reset). Origin for
-    // the Safety card is the real fix if we have permission, else the city centre.
-    LaunchedEffect(activePack, cityEpoch) {
+    // Load the home's facts + centre + cards. LIVE (online + an area set) fetches them
+    // fresh from OSM in ONE call and derives every card; otherwise the downloaded-pack
+    // path fills them. Reloads when the area/pack changes, or the interests/faith that
+    // decide what the single live fetch needs to include.
+    LaunchedEffect(activePack, cityEpoch, activeArea, prefs.interests, prefs.faith) {
+        val area = activeArea
+        val live = area != null && withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
+        if (live) {
+            hasCity = true
+            val center = area.center
+            cityCenter = center
+            // The hero + City Info come straight from the area — no fetch needed.
+            cityInfo = CityInfo(area.displayName, area.country, area.population)
+            festivals = emptyList()   // festivals need a Wikipedia call — deferred for live
+            locality = null           // suburb needs a downloaded pack; the hero shows the area name
+            val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
+            val origin = fixInCity(fix, center) ?: center
+            // ONE live fetch feeds every card below (daily needs, worth-visiting, for-you, worship).
+            val home = withContext(Dispatchers.IO) { LiveSource.places(area, homeCategories(prefs), origin) }
+            liveHome = home
+            // `home` is already ranked nearest-first, so firstOrNull of a category = nearest.
+            essentials = ESSENTIAL_CATEGORIES.mapNotNull { c -> home.firstOrNull { it.category == c } }
+            notable = home.filter { it.category == "attraction" }.take(NOTABLE_SHOWN)
+            return@LaunchedEffect
+        }
+        // --- Offline, or no live area set: the downloaded-pack path (unchanged) ---
+        liveHome = null
         val ok = withContext(Dispatchers.IO) { CityDatabase.hasAnyCity(context) }
         hasCity = ok
         if (!ok) {
-            // You deleted your last city — clear everything; the welcome state takes over.
+            // No pack and not live — the welcome state takes over.
             cityCenter = null; cityInfo = null; festivals = emptyList()
             essentials = emptyList(); notable = emptyList(); locality = null
             return@LaunchedEffect
@@ -529,31 +577,45 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     // ponytail: a far pack viewed from another timezone with location OFF would use the
     // phone's tz — fine for the normal "I'm in this city" case; a tz-from-coordinates
     // lookup would fix the rare planning-ahead edge.
-    LaunchedEffect(activePack, cityEpoch, prefs.faith, prefs.prayerMethod, prefs.prayerAsr) {
+    LaunchedEffect(activePack, cityEpoch, activeArea, prefs.faith, prefs.prayerMethod, prefs.prayerAsr, liveHome) {
         val faith = Faith.fromKey(prefs.faith)
-        // No faith picked, or no city loaded → nothing to show.
-        if (faith == null || !CityDatabase.hasAnyCity(context)) { prayerTimes = null; worship = null; return@LaunchedEffect }
+        if (faith == null) { prayerTimes = null; worship = null; return@LaunchedEffect }
+        val area = activeArea
+        val live = area != null && withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
+        if (live) {
+            // Worship comes from the ONE home fetch (worship is included when a faith is set);
+            // prayer times are computed ON-DEVICE from the area centre + phone timezone.
+            val here = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, area.center) ?: area.center
+            worship = (liveHome ?: emptyList()).firstOrNull { it.category == "worship" && it.religion == faith.key }
+            prayerTimes = if (faith == Faith.MUSLIM) computePrayerTimes(here, prefs) else null
+            return@LaunchedEffect
+        }
+        // Pack path.
+        if (!CityDatabase.hasAnyCity(context)) { prayerTimes = null; worship = null; return@LaunchedEffect }
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         val here = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center) ?: center
         if (here == null) { prayerTimes = null; worship = null; return@LaunchedEffect }  // empty pack
         worship = withContext(Dispatchers.IO) { db.nearestWorship(here, faith.key).firstOrNull() }
         // Calculated daily times exist only for Islam; other faiths show the place only.
-        prayerTimes = if (faith == Faith.MUSLIM) {
-            val cal = java.util.Calendar.getInstance()
-            val tzHours = java.util.TimeZone.getDefault().getOffset(cal.timeInMillis) / 3_600_000.0  // incl. DST
-            val method = runCatching { PrayerTimes.Method.valueOf(prefs.prayerMethod) }.getOrDefault(PrayerTimes.Method.MWL)
-            val asr = runCatching { PrayerTimes.Asr.valueOf(prefs.prayerAsr) }.getOrDefault(PrayerTimes.Asr.STANDARD)
-            PrayerTimes.compute(
-                cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH) + 1,
-                cal.get(java.util.Calendar.DAY_OF_MONTH), here.lat, here.lng, tzHours, method, asr,
-            )
-        } else null
+        prayerTimes = if (faith == Faith.MUSLIM) computePrayerTimes(here, prefs) else null
     }
 
     // "For you" — nearby places in your selected interests. Its own effect so it updates
     // the moment you change preferences, without needing a pack switch.
-    LaunchedEffect(activePack, cityEpoch, prefs.interests, prefs.diets) {
-        if (prefs.interests.isEmpty() || !CityDatabase.hasAnyCity(context)) { forYou = emptyList(); return@LaunchedEffect }
+    LaunchedEffect(activePack, cityEpoch, activeArea, prefs.interests, prefs.diets, liveHome) {
+        if (prefs.interests.isEmpty()) { forYou = emptyList(); return@LaunchedEffect }
+        val area = activeArea
+        val live = area != null && withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
+        if (live) {
+            // Derive from the ONE home fetch — no extra network call. Diet filters food only.
+            forYou = (liveHome ?: emptyList())
+                .filter { it.category in prefs.interests }
+                .filter { it.category != "food" || prefs.diets.isEmpty() || prefs.diets.any { d -> d in it.diets } }
+                .take(5)
+            return@LaunchedEffect
+        }
+        // Pack path.
+        if (!CityDatabase.hasAnyCity(context)) { forYou = emptyList(); return@LaunchedEffect }
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         val origin = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center)
             ?: center ?: MELBOURNE_CBD

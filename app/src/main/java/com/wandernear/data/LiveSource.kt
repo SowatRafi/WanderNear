@@ -62,18 +62,7 @@ object LiveSource {
         withContext(Dispatchers.IO) {
             // Fetch only the asked-for category when we know it (fast); else everything.
             val categories = spec.category?.let { listOf(it) }
-            val body = OsmClassifier.overpassBodyBbox(area.south, area.west, area.north, area.east, categories)
-            val json = overpassPost(body) ?: return@withContext emptyList()
-
-            val elements = runCatching { JSONObject(json).optJSONArray("elements") }.getOrNull()
-                ?: return@withContext emptyList()
-
-            // Parse every element to a grounded Place, keeping only the named/classifiable ones.
-            val all = ArrayList<Place>(elements.length())
-            for (i in 0 until elements.length()) {
-                val el = elements.optJSONObject(i) ?: continue
-                all += toPlace(el, origin) ?: continue
-            }
+            val all = fetchPlaces(area, categories, origin)
 
             // Structured filters first (category/religion/diet), then the free-text words.
             val base = all.filter { passesFilters(it, spec) }
@@ -87,8 +76,30 @@ object LiveSource {
                     if (hit.isNotEmpty()) hit else if (hasFilter) base else emptyList()
                 }
             }
-            result.sortedBy { it.distanceKm ?: Double.MAX_VALUE }.take(limit)
+            result.take(limit)   // fetchPlaces already ranked by distance
         }
+
+    /**
+     * Fetch every place in [categories] for the area, ranked nearest-first — the source
+     * for the live HOME cards (daily needs, worth-visiting, for-you, worship all derive
+     * from ONE such fetch, so the home costs a single Overpass call, not one per card).
+     */
+    suspend fun places(area: ActiveArea, categories: Collection<String>, origin: LatLng): List<Place> =
+        withContext(Dispatchers.IO) { fetchPlaces(area, categories, origin) }
+
+    /** Shared fetch + parse + distance-rank. [categories] null/empty ⇒ everything. */
+    private suspend fun fetchPlaces(area: ActiveArea, categories: Collection<String>?, origin: LatLng): List<Place> {
+        val body = OsmClassifier.overpassBodyBbox(area.south, area.west, area.north, area.east, categories)
+        val json = overpassPost(body) ?: return emptyList()
+        val elements = runCatching { JSONObject(json).optJSONArray("elements") }.getOrNull() ?: return emptyList()
+        // Parse every element to a grounded Place, keeping only the named/classifiable ones.
+        val all = ArrayList<Place>(elements.length())
+        for (i in 0 until elements.length()) {
+            val el = elements.optJSONObject(i) ?: continue
+            all += toPlace(el, origin) ?: continue
+        }
+        return all.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
+    }
 
     /** One OSM element → a grounded [Place], or null if it isn't named/classifiable/locatable. */
     private fun toPlace(el: JSONObject, origin: LatLng): Place? {
