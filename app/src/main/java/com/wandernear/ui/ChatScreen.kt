@@ -113,6 +113,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Star
@@ -244,6 +245,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     var pendingQuestion by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    // Is there a usable city at all? False only after you delete your last one — the screen then
+    // shows an "add a city" welcome instead of querying (which would have no pack to open).
+    var hasCity by remember(activePack) { mutableStateOf(CityDatabase.hasAnyCity(context)) }
     // The active city's facts (name, country, population) for the City Info card.
     var cityInfo by remember(activePack) { mutableStateOf<CityInfo?>(null) }
     // Nearest essentials (police/hospital/fuel/parking) for the daily-needs card.
@@ -359,6 +363,10 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // Runs the actual search: uses the real location if we have one, else the
     // city centre. Both parse + search happen off the main thread.
     fun runSearch(question: String) {
+        if (!hasCity) {
+            messages += ChatMessage(Role.Assistant, "I don't have a city loaded yet — open Preferences → Cities to add one, then I can help.")
+            return
+        }
         val aiEnabled = prefs.useAi && ModelManager.isDownloaded(context)
         // For the AI path (which can be slow, especially the first model load),
         // show a temporary loading bubble and replace it when the reply is ready.
@@ -456,6 +464,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // and RELOAD whenever the active pack changes (a download or reset). Origin for
     // the Safety card is the real fix if we have permission, else the city centre.
     LaunchedEffect(activePack) {
+        val ok = withContext(Dispatchers.IO) { CityDatabase.hasAnyCity(context) }
+        hasCity = ok
+        if (!ok) {
+            // You deleted your last city — clear everything; the welcome state takes over.
+            cityCenter = null; cityInfo = null; festivals = emptyList()
+            essentials = emptyList(); notable = emptyList(); locality = null
+            return@LaunchedEffect
+        }
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         cityCenter = center
         cityInfo = withContext(Dispatchers.IO) { db.cityInfo() }
@@ -480,7 +496,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // lookup would fix the rare planning-ahead edge.
     LaunchedEffect(activePack, prefs.faith, prefs.prayerMethod, prefs.prayerAsr) {
         val faith = Faith.fromKey(prefs.faith)
-        if (faith == null) { prayerTimes = null; worship = null; return@LaunchedEffect }  // no faith picked
+        // No faith picked, or no city loaded → nothing to show.
+        if (faith == null || !CityDatabase.hasAnyCity(context)) { prayerTimes = null; worship = null; return@LaunchedEffect }
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         val here = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center) ?: center
         if (here == null) { prayerTimes = null; worship = null; return@LaunchedEffect }  // empty pack
@@ -501,7 +518,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // "For you" — nearby places in your selected interests. Its own effect so it updates
     // the moment you change preferences, without needing a pack switch.
     LaunchedEffect(activePack, prefs.interests, prefs.diets) {
-        if (prefs.interests.isEmpty()) { forYou = emptyList(); return@LaunchedEffect }
+        if (prefs.interests.isEmpty() || !CityDatabase.hasAnyCity(context)) { forYou = emptyList(); return@LaunchedEffect }
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         val origin = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center)
             ?: center ?: MELBOURNE_CBD
@@ -522,7 +539,10 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        if (messages.isEmpty()) {
+        if (messages.isEmpty() && !hasCity) {
+            // You deleted your last city — a friendly welcome instead of a broken home.
+            NoCityState(modifier = Modifier.weight(1f))
+        } else if (messages.isEmpty()) {
             EmptyState(
                 onExample = ::ask,
                 city = cityInfo,
@@ -575,6 +595,36 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
             onSend = { ask(input) },
             voiceState = voiceState,
             onMicToggle = { toggleMic() },
+        )
+    }
+}
+
+/**
+ * Shown when there are no cities at all — i.e. you deleted your last one. A friendly welcome
+ * instead of a broken/empty home; the app comes right back the moment a city exists again.
+ */
+@Composable
+private fun NoCityState(modifier: Modifier) {
+    Column(
+        modifier = modifier.fillMaxWidth().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            Modifier.size(84.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Public, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(40.dp))
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("No city yet", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Add a city to start exploring — it works fully offline afterwards. " +
+                "Open Preferences → Cities → Add a city.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
     }
 }

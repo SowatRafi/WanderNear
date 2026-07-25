@@ -187,15 +187,9 @@ fun CitiesSection(repo: PreferencesRepository) {
                         RadioButton(selected = selected, onClick = null, enabled = !building)
                         Spacer(Modifier.width(8.dp))
                         Text(pack.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        // ANY city can be removed (including the built-in Melbourne) — but never
-                        // the LAST one, so the app always has a city to show.
-                        IconButton(
-                            onClick = {
-                                if (installed.size > 1) deleting = pack
-                                else { message = "Keep at least one city — add another first."; isError = false }
-                            },
-                            enabled = !building,
-                        ) {
+                        // ANY city can be removed — including the built-in Melbourne, and even the
+                        // last one (the home then shows an "add a city" welcome).
+                        IconButton(onClick = { deleting = pack }, enabled = !building) {
                             Icon(Icons.Outlined.Delete, "Delete ${pack.label}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -203,8 +197,9 @@ fun CitiesSection(repo: PreferencesRepository) {
             }
 
             // If the built-in Melbourne has been deleted, offer to bring it back — it re-seeds
-            // from the app itself (no download needed), with its richer Wikipedia data.
-            if (installed.isNotEmpty() && installed.none { it.packName == CityDatabase.BUNDLED_PACK }) {
+            // from the app itself (no download needed), with its richer Wikipedia data. Checked
+            // directly (not via the list) so it still shows when you've deleted EVERY city.
+            if (CityDatabase.isBundledHidden(context)) {
                 TextButton(onClick = {
                     scope.launch {
                         withContext(Dispatchers.IO) { CityDatabase.restoreBundled(context) }
@@ -346,8 +341,12 @@ fun CitiesSection(repo: PreferencesRepository) {
                         // is never left pointing at a pack that no longer exists. The "keep at least
                         // one city" rule guarantees another exists.
                         if (pk.packName == activePack) {
-                            installed.firstOrNull { it.packName != pk.packName }
-                                ?.let { repo.setActivePack(it.packName) }
+                            // Switch to another installed city, or reset to the default name if this
+                            // was the LAST one — the home then shows an "add a city" welcome, and it
+                            // all works again the moment a city exists (download, or Restore Melbourne).
+                            val next = installed.firstOrNull { it.packName != pk.packName }?.packName
+                                ?: CityDatabase.BUNDLED_PACK
+                            repo.setActivePack(next)
                         }
                         withContext(Dispatchers.IO) {
                             if (pk.packName == CityDatabase.BUNDLED_PACK) CityDatabase.deleteBundled(context)

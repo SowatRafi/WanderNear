@@ -400,6 +400,15 @@ class CityDatabase(
             hiddenMarker(context).delete()
         }
 
+        /** True if there's a usable city right now: the bundled Melbourne (unless deleted), or
+         *  any downloaded pack. When false, the app shows an "add a city" welcome instead of
+         *  querying — so deleting your last city can never crash the home. */
+        fun hasAnyCity(context: Context): Boolean {
+            if (!isBundledHidden(context)) return true
+            val packs = File(context.filesDir, "packs").listFiles { f -> f.name.endsWith(".db") }
+            return !packs.isNullOrEmpty()
+        }
+
         /**
          * Bump whenever the bundled pack in assets is rebuilt (new data OR a new column),
          * so an app update re-installs it over the copy a previous install left behind.

@@ -279,7 +279,10 @@ never guessed.
   time-aware greeting — "Good morning/afternoon/evening" + a pin on the place name — replacing the
   clinical "WHERE YOU ARE"), and added **deleting ANY city** (a trash button per pack in the Cities
   card — closes the M6.4d "no way to delete a pack" gap). Deleting the ACTIVE city switches to
-  another installed one first, and you can never delete the LAST city (so the app always has data).
+  another installed one first. You CAN delete your last city too — the home then shows a friendly
+  "No city yet" welcome (CityDatabase.hasAnyCity gates every query so it can't crash), and it all
+  comes back the moment you add a city or tap "Restore built-in Melbourne" (shown whenever Melbourne
+  is hidden, even at zero cities — a trap the on-device test caught).
   **Even the built-in Melbourne is deletable** now: since it's bundled + auto-re-seeded, a hidden
   MARKER file (`melbourne.db.hidden`) makes `seedBundled` bail out so it can't silently come back;
   `CityDatabase.deleteBundled`/`restoreBundled` toggle it, and a "Restore built-in Melbourne" button
