@@ -79,6 +79,8 @@ fun CitiesSection(repo: PreferencesRepository) {
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val activePack by repo.activePack.collectAsState(initial = CityDatabase.BUNDLED_PACK)
+    // The area being explored LIVE (online), if any — shown so the user knows what's set.
+    val activeArea by repo.activeArea.collectAsState(initial = null)
 
     // The packs on this phone. Reloaded whenever the active one changes — which
     // covers a finished download too, since that switches the active pack.
@@ -121,6 +123,18 @@ fun CitiesSection(repo: PreferencesRepository) {
         }
     }
 
+    /** Set the confirmed area as active for LIVE exploring — no download needed. Only the
+     *  area's name/bbox is stored; the places are fetched live from OSM when you ask. */
+    fun useLive(match: CityPackBuilder.Match) {
+        scope.launch {
+            repo.setActiveArea(match.toActiveArea())
+            matches = emptyList()
+            query = ""
+            message = "${match.shortLabel} is set — exploring live. Ask away on the Explore tab."
+            isError = false
+        }
+    }
+
     /** Download + build the confirmed city, then make it the active one. */
     fun startBuild(match: CityPackBuilder.Match) {
         progress = 0f
@@ -156,11 +170,19 @@ fun CitiesSection(repo: PreferencesRepository) {
             SectionHeader(Icons.Filled.Public, "Cities")
             Spacer(Modifier.height(6.dp))
             Text(
-                "Switch between the cities you have offline, or add a new one. " +
-                    "Adding needs internet once — after that the city works with no signal at all.",
+                "Add a city and explore it live over the internet — or download it to also use " +
+                    "with no signal. Only the city name is ever sent; never your location.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            activeArea?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Exploring live: ${it.shortName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
 
             // --- 1. The cities already on this phone -----------------------------
             Spacer(Modifier.height(16.dp))
@@ -196,18 +218,18 @@ fun CitiesSection(repo: PreferencesRepository) {
                 }
             }
 
-            // If the built-in Melbourne has been deleted, offer to bring it back — it re-seeds
-            // from the app itself (no download needed), with its richer Wikipedia data. Checked
-            // directly (not via the list) so it still shows when you've deleted EVERY city.
-            if (CityDatabase.isBundledHidden(context)) {
+            // When the built-in Melbourne sample isn't installed, offer to add it — copied
+            // straight from the app (no download, works offline), with its richer Wikipedia
+            // data. Checked directly (not via the list) so it still shows at zero cities.
+            if (!CityDatabase.isBundledInstalled(context)) {
                 TextButton(onClick = {
                     scope.launch {
-                        withContext(Dispatchers.IO) { CityDatabase.restoreBundled(context) }
+                        withContext(Dispatchers.IO) { CityDatabase.installBundled(context) }
                         installed = withContext(Dispatchers.IO) { installedPacks(context) }
-                        message = "Built-in Melbourne restored."
+                        message = "Built-in Melbourne added."
                         isError = false
                     }
-                }) { Text("Restore built-in Melbourne") }
+                }) { Text("Add built-in Melbourne (offline sample)") }
             }
 
             // --- 2. Add a city ---------------------------------------------------
@@ -291,25 +313,25 @@ fun CitiesSection(repo: PreferencesRepository) {
             }
     }
 
-    // The confirmation, named after exactly what it does.
+    // Explore live (default) or download for offline — the confirmed area either way.
     confirming?.let { match ->
         AlertDialog(
             onDismissRequest = { confirming = null },
-            title = { Text("Download data for ${match.shortLabel}?") },
+            title = { Text("Explore ${match.shortLabel}?") },
             text = {
                 Text(
                     "${match.label}\n\n" +
-                        "Downloads map data over the internet — usually a few megabytes, up to a " +
-                        "couple of minutes. Only the city name is sent; nothing about you.\n\n" +
-                        "New cities come with places and directions, but not yet the Wikipedia " +
-                        "descriptions the built-in city has.",
+                        "Use it live: places load from the internet as you ask and rank near you on " +
+                        "your phone — nothing to wait for. Only the area name is sent, never your location.\n\n" +
+                        "Or download it once (a few MB) to also explore with no signal at all.",
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    confirming = null
-                    startBuild(match)
-                }) { Text("Download") }
+                // Two paths, live first (the default); download is the optional offline extra.
+                Row {
+                    TextButton(onClick = { confirming = null; useLive(match) }) { Text("Use live") }
+                    TextButton(onClick = { confirming = null; startBuild(match) }) { Text("Download") }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { confirming = null }) { Text("Cancel") }
@@ -326,8 +348,8 @@ fun CitiesSection(repo: PreferencesRepository) {
             text = {
                 Text(
                     if (isBundled)
-                        "Melbourne is the built-in city — it has the richest data (Wikipedia stories " +
-                            "and festivals). Removing it frees space; you can restore it any time."
+                        "Melbourne is the built-in sample — it has the richest data (Wikipedia stories " +
+                            "and festivals). Removing it frees space; you can add it back any time, offline."
                     else
                         "Its offline data will be removed from this phone. You can download it again any time.",
                 )
@@ -376,9 +398,10 @@ private fun installedPacks(context: Context): List<InstalledPack> {
         ?.sortedBy { it.name }
         ?.map { InstalledPack("packs/" + it.name, packLabel(context, "packs/" + it.name)) }
         ?: emptyList()
-    // The built-in Melbourne comes first, UNLESS the user has deleted it.
-    val bundled = if (CityDatabase.isBundledHidden(context)) emptyList()
-        else listOf(InstalledPack(CityDatabase.BUNDLED_PACK, packLabel(context, CityDatabase.BUNDLED_PACK)))
+    // The built-in Melbourne comes first, but only when it's actually installed.
+    val bundled = if (CityDatabase.isBundledInstalled(context))
+        listOf(InstalledPack(CityDatabase.BUNDLED_PACK, packLabel(context, CityDatabase.BUNDLED_PACK)))
+    else emptyList()
     return bundled + downloaded
 }
 

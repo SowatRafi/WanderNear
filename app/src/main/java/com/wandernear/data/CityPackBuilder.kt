@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.util.JsonReader
+import com.wandernear.core.model.ActiveArea
 import com.wandernear.core.pack.Festivals
 import com.wandernear.core.pack.OsmClassifier
 import kotlinx.coroutines.CancellationException
@@ -151,6 +152,13 @@ object CityPackBuilder {
     ) {
         /** Just the leading name, for headings — e.g. "Geelong". */
         val shortLabel: String get() = label.substringBefore(',').trim()
+
+        /** As an [ActiveArea] for the live/online mode — same bbox, name and facts, so
+         *  "use live" and "download" both describe exactly the area the user confirmed. */
+        fun toActiveArea(): ActiveArea = ActiveArea(
+            displayName = label, south = south, west = west, north = north, east = east,
+            country = country, population = population,
+        )
     }
 
     /**
@@ -423,7 +431,7 @@ object CityPackBuilder {
             put("category", kind.category)
             put("subcategory", kind.subcategory)
             put("lat", lat); put("lng", lng)
-            address(el.tags)?.let { put("address", it) }
+            OsmClassifier.address(el.tags)?.let { put("address", it) }
             el.tags["addr:suburb"]?.ifBlank { null }?.let { put("suburb", it) }
             el.tags["cuisine"]?.let { put("cuisine", it) }
             el.tags["religion"]?.let { put("religion", it) }
@@ -524,18 +532,6 @@ object CityPackBuilder {
                 },
             )
         }
-    }
-
-    /** Build a readable address from OSM addr:* tags — mirrors `build_db.address`. */
-    private fun address(tags: Map<String, String>): String? {
-        // Treat an empty tag as absent (like Python's `if p`), so we never emit a
-        // stray segment like "Main St, , Geelong".
-        fun tag(key: String) = tags[key]?.ifBlank { null }
-        val street = listOfNotNull(tag("addr:housenumber"), tag("addr:street")).joinToString(" ")
-        val parts = listOfNotNull(
-            street.ifBlank { null }, tag("addr:suburb"), tag("addr:city"), tag("addr:postcode"),
-        )
-        return if (parts.isEmpty()) null else parts.joinToString(", ")
     }
 
     // ---- small helpers ---------------------------------------------------------

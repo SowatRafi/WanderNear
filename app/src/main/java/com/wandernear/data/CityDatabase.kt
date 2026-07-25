@@ -13,64 +13,33 @@ import kotlin.math.cos
 import java.io.File
 
 /**
- * Reads the bundled, read-only Melbourne data pack.
+ * Reads the ACTIVE, read-only city data pack (a downloaded city, or the built-in
+ * Melbourne sample once it's been added).
  *
- * The pack ships in the app's assets; on first use it's copied once into private
- * storage and opened read-only. We open SQLite directly (not Room) because the
- * pack is read-only and already has the full-text search index we built in the
- * data pipeline. This is the single source of truth — the app never invents data.
+ * The app is online-first: a fresh install has NO city and shows an "add a city"
+ * welcome; adding one fetches it from OpenStreetMap/Wikipedia and saves it here, so it
+ * then works fully offline. We open SQLite directly (not Room) because the pack is
+ * read-only and already carries the full-text search index built in the data pipeline.
+ * This is the single source of truth — the app never invents data.
  */
 class CityDatabase(
     private val context: Context,
-    // Which pack to read, as a path relative to filesDir. Defaults to the bundled
-    // city; a downloaded pack is e.g. "packs/geelong_2456176.db".
+    // Which pack to read, as a path relative to filesDir. Defaults to the built-in
+    // Melbourne name; a downloaded pack is e.g. "packs/geelong_2456176.db". Callers gate
+    // on [hasAnyCity], so this is only opened when the file actually exists.
     private val packName: String = BUNDLED_PACK,
 ) {
 
     private fun open(): SQLiteDatabase {
-        // If a downloaded pack was set active but its file is gone (deleted/cleared),
-        // fall back to the bundled city instead of crashing on a missing file.
+        // If the active pack's file is gone (deleted/cleared), fall back to the built-in
+        // Melbourne IF it's present, rather than crashing on a missing file. We never
+        // reach here with no city at all — every caller checks [hasAnyCity] first.
+        val bundled = File(context.filesDir, BUNDLED_PACK)
         val name =
-            if (packName != BUNDLED_PACK && !File(context.filesDir, packName).exists()) BUNDLED_PACK
+            if (packName != BUNDLED_PACK && !File(context.filesDir, packName).exists() && bundled.exists()) BUNDLED_PACK
             else packName
         val dbFile = File(context.filesDir, name)
-        // Only the BUNDLED pack is seeded from assets; downloaded packs already live
-        // in filesDir/packs/. This is what lets us open ANY active city, not just Melbourne.
-        if (name == BUNDLED_PACK) seedBundled(dbFile)
         return SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
-    }
-
-    /**
-     * Install the bundled pack on first run — AND re-install it after an app update that
-     * ships a newer one, tracked by a small version marker beside it.
-     *
-     * Without that version check the pack was copied exactly once, so a rebuilt pack (new
-     * data, or a new column like `suburb`) never reached an existing install — it silently
-     * kept the stale one, and a query for a new column would crash. Publishes atomically
-     * (temp file, then rename) and is serialized across instances (chat + Travel Mode) so a
-     * concurrent open never sees a half-written pack.
-     */
-    private fun seedBundled(dbFile: File) {
-        // The user may have removed the built-in city (Cities → delete Melbourne). While it's
-        // hidden, never silently re-copy it back from assets — only [restoreBundled] brings it back.
-        if (isBundledHidden(context)) return
-        val marker = File(context.filesDir, "$BUNDLED_PACK.version")
-        fun installed(): Int? =
-            if (marker.exists()) marker.runCatching { readText().trim().toInt() }.getOrNull() else null
-        if (dbFile.exists() && installed() == BUNDLED_PACK_VERSION) return
-        synchronized(COPY_LOCK) {
-            if (dbFile.exists() && installed() == BUNDLED_PACK_VERSION) return   // re-check under the lock
-            val tmp = File(context.filesDir, "$BUNDLED_PACK.tmp")
-            context.assets.open(BUNDLED_PACK).use { input ->
-                tmp.outputStream().use { output -> input.copyTo(output) }
-            }
-            if (dbFile.exists()) dbFile.delete()
-            if (!tmp.renameTo(dbFile)) {
-                tmp.delete()
-                throw IllegalStateException("Failed to install $BUNDLED_PACK")
-            }
-            marker.writeText(BUNDLED_PACK_VERSION.toString())
-        }
     }
 
     /**
@@ -376,47 +345,59 @@ class CityDatabase(
     private fun Cursor.getStringOrNull(i: Int): String? = if (isNull(i)) null else getString(i)
 
     companion object {
-        /** The bundled pack shipped in assets — the default active city. */
+        /** The built-in Melbourne pack, shipped in assets as an OPTIONAL offline SAMPLE.
+         *  The app is online-first: a fresh install has NO city and shows the "add a city"
+         *  welcome. Melbourne exists only after the user taps "Add built-in Melbourne"
+         *  ([installBundled]) — it is never auto-loaded. Also the default active-pack name,
+         *  which is harmless while absent (the UI gates on [hasAnyCity] and never opens it). */
         const val BUNDLED_PACK = "melbourne.db"
 
-        /** Marker file: present ⇒ the user deleted the built-in Melbourne pack, so it must
-         *  not be re-seeded from assets or listed until they restore it. */
-        private fun hiddenMarker(context: Context) = File(context.filesDir, "$BUNDLED_PACK.hidden")
+        /** True once the built-in Melbourne sample has been copied onto the phone. It's a
+         *  plain file check — the file's existence IS the state (no separate marker). */
+        fun isBundledInstalled(context: Context): Boolean =
+            File(context.filesDir, BUNDLED_PACK).exists()
 
-        /** True if the user has removed the built-in Melbourne pack. */
-        fun isBundledHidden(context: Context): Boolean = hiddenMarker(context).exists()
+        /**
+         * Copy the built-in Melbourne sample from the APK's assets into private storage —
+         * offline (no network) and idempotent. Publishes atomically (temp file, then rename)
+         * under a lock so a double-tap can't leave a half-written pack behind.
+         */
+        fun installBundled(context: Context) {
+            synchronized(COPY_LOCK) {
+                val dbFile = File(context.filesDir, BUNDLED_PACK)
+                val tmp = File(context.filesDir, "$BUNDLED_PACK.tmp")
+                context.assets.open(BUNDLED_PACK).use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (dbFile.exists()) dbFile.delete()
+                if (!tmp.renameTo(dbFile)) {
+                    tmp.delete()
+                    throw IllegalStateException("Failed to install $BUNDLED_PACK")
+                }
+                // Clear a legacy "hidden" marker from the old delete scheme — installing it back
+                // means it's not hidden. Harmless if absent (fresh installs never have one).
+                File(context.filesDir, "$BUNDLED_PACK.hidden").delete()
+            }
+        }
 
-        /** Remove the built-in Melbourne pack: mark it hidden (so a concurrent open can't
-         *  re-seed it), then delete its file + SQLite sidecars + version marker. Reversible. */
+        /** Remove the built-in Melbourne sample: delete its file, any SQLite sidecars, and
+         *  leftover markers from the old scheme. Reversible — [installBundled] copies it back. */
         fun deleteBundled(context: Context) {
-            hiddenMarker(context).writeText("1")   // set FIRST so seedBundled bails out
-            for (s in listOf("", "-journal", "-wal", "-shm", ".version", ".tmp")) {
+            for (s in listOf("", "-journal", "-wal", "-shm", ".version", ".hidden", ".tmp")) {
                 File(context.filesDir, BUNDLED_PACK + s).delete()
             }
         }
 
-        /** Bring the built-in Melbourne back — re-seeded from assets the next time it's opened. */
-        fun restoreBundled(context: Context) {
-            hiddenMarker(context).delete()
-        }
-
-        /** True if there's a usable city right now: the bundled Melbourne (unless deleted), or
-         *  any downloaded pack. When false, the app shows an "add a city" welcome instead of
-         *  querying — so deleting your last city can never crash the home. */
+        /** True if there's a usable city right now: the built-in Melbourne sample, or any
+         *  downloaded pack. When false, the app shows an "add a city" welcome instead of
+         *  querying — so a fresh install (and deleting your last city) can never crash the home. */
         fun hasAnyCity(context: Context): Boolean {
-            if (!isBundledHidden(context)) return true
+            if (isBundledInstalled(context)) return true
             val packs = File(context.filesDir, "packs").listFiles { f -> f.name.endsWith(".db") }
             return !packs.isNullOrEmpty()
         }
 
-        /**
-         * Bump whenever the bundled pack in assets is rebuilt (new data OR a new column),
-         * so an app update re-installs it over the copy a previous install left behind.
-         * v2 = M6.5's rebuild (adds the `suburb` column + health/fuel/parking).
-         * v3 = M6.6's rebuild (adds the `culture` category + the city's annual festivals).
-         */
-        const val BUNDLED_PACK_VERSION = 3
-        private val COPY_LOCK = Any()   // guards the one-time assets → filesDir copy
+        private val COPY_LOCK = Any()   // guards the assets → filesDir copy
 
         // The place columns every query selects, in the exact order [readPlaces]
         // reads them (index 0..11). Kept in one place so the order can never drift.

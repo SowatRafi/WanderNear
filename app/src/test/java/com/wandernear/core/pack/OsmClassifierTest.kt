@@ -1,6 +1,7 @@
 package com.wandernear.core.pack
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,6 +86,22 @@ class OsmClassifierTest {
         assertTrue(q.contains("""nwr["leisure"~"^(stadium)${'$'}"]"""))
         assertTrue(q.contains("""relation["route"="hiking"]"""))
         assertTrue(q.contains("out center tags;"))
+    }
+
+    @Test
+    fun overpassBodyBbox_scopesToBboxAndCanNarrowByCategory() {
+        // Default: every category, scoped to the bbox in Overpass's own (S,W,N,E) order.
+        val all = OsmClassifier.overpassBodyBbox(-38.0, 144.0, -37.0, 145.0)
+        assertTrue(all.contains("(-38.0,144.0,-37.0,145.0)"))
+        assertTrue(all.contains("""nwr["amenity"~"^(restaurant|cafe|fast_food|food_court|bar|pub|ice_cream)${'$'}"]"""))
+        assertTrue(all.contains("""nwr["amenity"="hospital"]"""))
+        assertTrue(all.contains("out center tags;"))
+
+        // Narrowed to one category → only that category's selectors are fetched, so a live
+        // "coffee" query doesn't drag down every hospital and car park in the bbox too.
+        val food = OsmClassifier.overpassBodyBbox(-38.0, 144.0, -37.0, 145.0, listOf("food"))
+        assertTrue(food.contains("""nwr["amenity"~"^(restaurant|cafe|fast_food|food_court|bar|pub|ice_cream)${'$'}"]"""))
+        assertFalse(food.contains("""nwr["amenity"="hospital"]"""))
     }
 
     @Test

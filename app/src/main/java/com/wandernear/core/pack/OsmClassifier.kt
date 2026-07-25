@@ -89,35 +89,92 @@ object OsmClassifier {
         else -> null
     }
 
+    /** Every app category we fetch, in a stable order. */
+    val CATEGORIES = listOf(
+        "food", "worship", "attraction", "outdoor", "shopping",
+        "culture", "safety", "health", "fuel", "parking",
+    )
+
+    private fun re(values: Set<String>) = values.joinToString("|")
+
+    /**
+     * The Overpass selector(s) for one app category, WITHOUT a scope suffix — e.g.
+     * `nwr["amenity"~"^(restaurant|cafe|…)$"]`. Shared by BOTH the whole-area query
+     * (a download, [overpassBody]) and the bbox query (live, [overpassBodyBbox]), so
+     * the two can never fetch different things than [classify] keeps.
+     */
+    private fun selectorsFor(category: String): List<String> = when (category) {
+        "food" -> listOf("""nwr["amenity"~"^(${re(FOOD)})${'$'}"]""")
+        "worship" -> listOf("""nwr["amenity"="place_of_worship"]""")
+        "attraction" -> listOf(
+            """nwr["tourism"~"^(${re(TOURISM)})${'$'}"]""",
+            """nwr["historic"~"^(${re(HISTORIC)})${'$'}"]""",
+        )
+        "outdoor" -> listOf(
+            """nwr["natural"~"^(${re(NATURAL)})${'$'}"]""",
+            """nwr["leisure"~"^(${re(LEISURE)})${'$'}"]""",
+            """relation["route"="hiking"]""",
+        )
+        "shopping" -> listOf(
+            """nwr["amenity"="marketplace"]""",
+            """nwr["shop"~"^(${re(SHOPPING)})${'$'}"]""",
+        )
+        "culture" -> listOf(
+            """nwr["amenity"~"^(${re(CULTURE)})${'$'}"]""",
+            """nwr["leisure"~"^(${re(CULTURE_LEISURE)})${'$'}"]""",
+        )
+        "safety" -> listOf("""nwr["amenity"="police"]""")
+        "health" -> listOf("""nwr["amenity"="hospital"]""")
+        "fuel" -> listOf("""nwr["amenity"="fuel"]""")
+        "parking" -> listOf("""nwr["amenity"="parking"]""")
+        else -> emptyList()
+    }
+
     /**
      * The Overpass query body that fetches exactly the categories [classify] keeps,
-     * scoped to [areaId]. Mirrors `fetch_osm.build_query`. `nwr` = nodes/ways/
-     * relations; `out center tags;` gives each result one lat/lon point plus its
-     * tags — what we need for map pins.
+     * scoped to [areaId] — the whole-city DOWNLOAD. Mirrors `fetch_osm.build_query`.
+     * `nwr` = nodes/ways/relations; `out center tags;` gives each result one lat/lon
+     * point plus its tags — what we need for map pins.
      */
     fun overpassBody(areaId: Long): String {
-        fun re(values: Set<String>) = values.joinToString("|")
-        return """
-            [out:json][timeout:180];
-            area($areaId)->.a;
-            (
-              nwr["amenity"~"^(${re(FOOD)})${'$'}"](area.a);
-              nwr["amenity"="place_of_worship"](area.a);
-              nwr["tourism"~"^(${re(TOURISM)})${'$'}"](area.a);
-              nwr["historic"~"^(${re(HISTORIC)})${'$'}"](area.a);
-              nwr["natural"~"^(${re(NATURAL)})${'$'}"](area.a);
-              nwr["leisure"~"^(${re(LEISURE)})${'$'}"](area.a);
-              nwr["amenity"="police"](area.a);
-              nwr["amenity"="marketplace"](area.a);
-              nwr["shop"~"^(${re(SHOPPING)})${'$'}"](area.a);
-              nwr["amenity"="hospital"](area.a);
-              nwr["amenity"="fuel"](area.a);
-              nwr["amenity"="parking"](area.a);
-              nwr["amenity"~"^(${re(CULTURE)})${'$'}"](area.a);
-              nwr["leisure"~"^(${re(CULTURE_LEISURE)})${'$'}"](area.a);
-              relation["route"="hiking"](area.a);
-            );
-            out center tags;
-        """.trimIndent()
+        val clauses = CATEGORIES.flatMap { selectorsFor(it) }.joinToString("\n") { "  $it(area.a);" }
+        return "[out:json][timeout:180];\n" +
+            "area($areaId)->.a;\n" +
+            "(\n$clauses\n);\n" +
+            "out center tags;"
+    }
+
+    /**
+     * The LIVE query: the same selectors, but scoped to a bounding box instead of a
+     * downloaded area, and optionally narrowed to just [categories] (e.g. only "food"
+     * when the user asked for coffee) so a live fetch stays small and fast. A null or
+     * empty [categories] fetches everything, like a download. The bbox order is
+     * Overpass's own: (south, west, north, east).
+     */
+    fun overpassBodyBbox(
+        south: Double, west: Double, north: Double, east: Double,
+        categories: Collection<String>? = null,
+    ): String {
+        val cats = categories?.filter { it in CATEGORIES }?.takeIf { it.isNotEmpty() } ?: CATEGORIES
+        val bbox = "($south,$west,$north,$east)"
+        val clauses = cats.flatMap { selectorsFor(it) }.joinToString("\n") { "  $it$bbox;" }
+        // A tighter default timeout than a full download — a live query is small.
+        return "[out:json][timeout:60];\n" +
+            "(\n$clauses\n);\n" +
+            "out center tags;"
+    }
+
+    /**
+     * A readable address from OSM addr:* tags — mirrors `build_db.address`. Shared by
+     * the download builder and the live source so both format an address the same way.
+     * An empty tag is treated as absent, so we never emit "Main St, , Geelong".
+     */
+    fun address(tags: Map<String, String>): String? {
+        fun tag(key: String) = tags[key]?.ifBlank { null }
+        val street = listOfNotNull(tag("addr:housenumber"), tag("addr:street")).joinToString(" ")
+        val parts = listOfNotNull(
+            street.ifBlank { null }, tag("addr:suburb"), tag("addr:city"), tag("addr:postcode"),
+        )
+        return if (parts.isEmpty()) null else parts.joinToString(", ")
     }
 }

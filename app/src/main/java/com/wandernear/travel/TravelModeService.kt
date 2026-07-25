@@ -129,6 +129,9 @@ class TravelModeService : Service() {
             // Read whichever city pack is active (bundled or a downloaded one) each time.
             val pack = PreferencesRepository(applicationContext).activePack.first()
             val db = CityDatabase(this@TravelModeService, pack)
+            // No city installed (e.g. you deleted your last one while Travel Mode is on) →
+            // nothing to point at, and opening a missing pack would crash. Clear and wait.
+            if (!CityDatabase.hasAnyCity(applicationContext)) { publishAround(pack, emptyList()); return@launch }
             if (pack != alertedPack) {            // switched city → de-dup from scratch
                 alerted.clear()
                 alertedPack = pack

@@ -42,6 +42,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -84,6 +85,7 @@ import com.wandernear.core.response.Recommender
 import com.wandernear.core.retrieval.QueryParser
 import com.wandernear.ui.theme.categoryTint
 import com.wandernear.data.CityDatabase
+import com.wandernear.data.LiveSource
 import com.wandernear.data.LocationProvider
 import com.wandernear.data.PreferencesRepository
 import com.wandernear.data.journal.JournalDatabase
@@ -103,6 +105,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -230,13 +233,17 @@ private data class ChatMessage(
     val loading: Boolean = false,
 )
 
-/** The main tab: ask for a place, get real recommendations built from the data. */
+/** The main tab: ask for a place, get real recommendations built from the data.
+ *  [onAddCity] jumps to Preferences → Cities (used by the "no city yet" welcome). */
 @Composable
-fun ChatScreen(prefsRepo: PreferencesRepository) {
+fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     val context = LocalContext.current
     val prefs by prefsRepo.preferences.collectAsState(initial = UserPreferences())
     // The active city pack — re-open the data whenever it changes (a download or reset).
     val activePack by prefsRepo.activePack.collectAsState(initial = CityDatabase.BUNDLED_PACK)
+    // The live/online area the user is exploring (set by name), or null. When online AND
+    // set, searches fetch live from OSM; otherwise we fall back to a downloaded pack.
+    val activeArea by prefsRepo.activeArea.collectAsState(initial = null)
     val db = remember(activePack) { CityDatabase(context, activePack) }
     val journalDao = remember { JournalDatabase.get(context).journalDao() }
     val messages = remember { mutableStateListOf<ChatMessage>() }
@@ -245,9 +252,12 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     var pendingQuestion by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    // Is there a usable city at all? False only after you delete your last one — the screen then
-    // shows an "add a city" welcome instead of querying (which would have no pack to open).
-    var hasCity by remember(activePack) { mutableStateOf(CityDatabase.hasAnyCity(context)) }
+    // Bumped when a city is added from THIS screen (the welcome's "Try Melbourne"), where the
+    // active-pack NAME may not change — it forces the load effects below to re-run.
+    var cityEpoch by remember { mutableStateOf(0) }
+    // Is there a usable city at all? False on a fresh install and after you delete your last
+    // city — the screen then shows an "add a city" welcome instead of querying (no pack to open).
+    var hasCity by remember(activePack, cityEpoch) { mutableStateOf(CityDatabase.hasAnyCity(context)) }
     // The active city's facts (name, country, population) for the City Info card.
     var cityInfo by remember(activePack) { mutableStateOf<CityInfo?>(null) }
     // Nearest essentials (police/hospital/fuel/parking) for the daily-needs card.
@@ -360,23 +370,34 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         }
     }
 
-    // Runs the actual search: uses the real location if we have one, else the
-    // city centre. Both parse + search happen off the main thread.
+    // Runs the actual search. LIVE (online + an area set) fetches fresh from OSM; else
+    // we fall back to a downloaded pack. "Near you" ranking uses the real fix if we have
+    // one, else the area/city centre. Parse + fetch/search happen off the main thread.
     fun runSearch(question: String) {
-        if (!hasCity) {
-            messages += ChatMessage(Role.Assistant, "I don't have a city loaded yet — open Preferences → Cities to add one, then I can help.")
+        val area = activeArea
+        val online = LiveSource.isOnline(context)
+        val useLive = online && area != null
+        // Nothing to search: no live area+signal AND no downloaded pack.
+        if (!useLive && !hasCity) {
+            messages += ChatMessage(
+                Role.Assistant,
+                if (area != null)
+                    "You're offline — reconnect to explore ${area.shortName} live, or download it for offline in Preferences → Cities."
+                else
+                    "Tell me where you are first — set your area in Preferences → Cities, and I'll explore it live.",
+            )
             return
         }
         val aiEnabled = prefs.useAi && ModelManager.isDownloaded(context)
-        // For the AI path (which can be slow, especially the first model load),
-        // show a temporary loading bubble and replace it when the reply is ready.
-        val placeholderIndex = if (aiEnabled) {
-            val warming = !LlmEngine.isLoaded()
-            messages += ChatMessage(
-                Role.Assistant,
-                if (warming) "Warming up the on-device AI (first time, about a minute)…" else "Thinking…",
-                loading = true,
-            )
+        // Show a temporary loading bubble for anything with a wait — the AI (slow first
+        // load) OR a live fetch (a network round-trip) — and replace it when ready.
+        val placeholderIndex = if (aiEnabled || useLive) {
+            val text = when {
+                aiEnabled && !LlmEngine.isLoaded() -> "Warming up the on-device AI (first time, about a minute)…"
+                aiEnabled -> "Thinking…"
+                else -> "Searching ${area?.shortName ?: "nearby"}…"   // live, no AI
+            }
+            messages += ChatMessage(Role.Assistant, text, loading = true)
             messages.lastIndex
         } else {
             null
@@ -384,11 +405,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 
         scope.launch {
             val answer = withContext(Dispatchers.IO) {
-                // null ⇒ no permission/fix, OR we're nowhere near this city (see fixInCity)
-                val here = fixInCity(LocationProvider.lastKnown(context), cityCenter)
-                val origin = here ?: cityCenter ?: MELBOURNE_CBD
+                // Live ranks around the area's centre; the pack around its centroid. The
+                // real fix (if any, and actually near here) wins — and stays on-device.
+                val center = if (useLive) area.center else cityCenter
+                val here = fixInCity(LocationProvider.lastKnown(context), center)
+                val origin = here ?: center ?: MELBOURNE_CBD
                 val spec = QueryParser.parse(question, prefs)
-                val places = db.search(spec, origin)
+                val places = if (useLive) LiveSource.search(area, spec, origin) else db.search(spec, origin)
+                val cityName = if (useLive) area.shortName else cityInfo?.name
 
                 if (places.isEmpty()) {
                     // Nothing retrieved → honest refusal; the AI is never called.
@@ -405,7 +429,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                         // Use the AI reply only if it isn't empty AND names only
                         // places we actually retrieved; otherwise fall back to the
                         // template. This is the enforced never-hallucinate guardrail.
-                        aiText?.takeIf { it.isNotBlank() && GroundingCheck.isGrounded(it, places, cityInfo?.name) }
+                        aiText?.takeIf { it.isNotBlank() && GroundingCheck.isGrounded(it, places, cityName) }
                             ?: Recommender.reply(spec, places, nearYou = here != null)
                     } else {
                         Recommender.reply(spec, places, nearYou = here != null)
@@ -460,10 +484,21 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
         }
     }
 
+    // Add the built-in Melbourne sample from the welcome — an instant, offline first city.
+    // installBundled is a quick (<1s) asset copy and is atomic + idempotent, so a double-tap
+    // is safe. cityEpoch++ nudges the load effects since the active-pack name may not change.
+    fun tryMelbourne() {
+        scope.launch {
+            withContext(Dispatchers.IO) { CityDatabase.installBundled(context) }
+            prefsRepo.setActivePack(CityDatabase.BUNDLED_PACK)
+            cityEpoch++
+        }
+    }
+
     // Load the active city's facts + centre + nearest police, off the main thread,
     // and RELOAD whenever the active pack changes (a download or reset). Origin for
     // the Safety card is the real fix if we have permission, else the city centre.
-    LaunchedEffect(activePack) {
+    LaunchedEffect(activePack, cityEpoch) {
         val ok = withContext(Dispatchers.IO) { CityDatabase.hasAnyCity(context) }
         hasCity = ok
         if (!ok) {
@@ -494,7 +529,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
     // ponytail: a far pack viewed from another timezone with location OFF would use the
     // phone's tz — fine for the normal "I'm in this city" case; a tz-from-coordinates
     // lookup would fix the rare planning-ahead edge.
-    LaunchedEffect(activePack, prefs.faith, prefs.prayerMethod, prefs.prayerAsr) {
+    LaunchedEffect(activePack, cityEpoch, prefs.faith, prefs.prayerMethod, prefs.prayerAsr) {
         val faith = Faith.fromKey(prefs.faith)
         // No faith picked, or no city loaded → nothing to show.
         if (faith == null || !CityDatabase.hasAnyCity(context)) { prayerTimes = null; worship = null; return@LaunchedEffect }
@@ -517,7 +552,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 
     // "For you" — nearby places in your selected interests. Its own effect so it updates
     // the moment you change preferences, without needing a pack switch.
-    LaunchedEffect(activePack, prefs.interests, prefs.diets) {
+    LaunchedEffect(activePack, cityEpoch, prefs.interests, prefs.diets) {
         if (prefs.interests.isEmpty() || !CityDatabase.hasAnyCity(context)) { forYou = emptyList(); return@LaunchedEffect }
         val center = withContext(Dispatchers.IO) { db.cityCenter() }
         val origin = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center)
@@ -540,8 +575,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 
     Column(Modifier.fillMaxSize().imePadding()) {
         if (messages.isEmpty() && !hasCity) {
-            // You deleted your last city — a friendly welcome instead of a broken home.
-            NoCityState(modifier = Modifier.weight(1f))
+            // Fresh install, or you deleted your last city — a warm welcome, not a broken home.
+            // If a live area is already set, it says "explore [area]" and points to the chat.
+            NoCityState(
+                areaName = activeArea?.shortName,
+                onAddCity = onAddCity,
+                onTryMelbourne = ::tryMelbourne,
+                modifier = Modifier.weight(1f),
+            )
         } else if (messages.isEmpty()) {
             EmptyState(
                 onExample = ::ask,
@@ -600,29 +641,73 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
 }
 
 /**
- * Shown when there are no cities at all — i.e. you deleted your last one. A friendly welcome
- * instead of a broken/empty home; the app comes right back the moment a city exists again.
+ * Shown when no downloaded city is loaded. Online-first: nothing is bundled, so a fresh
+ * install lands here. If a live [areaName] is already set, it becomes a "ready to explore
+ * [area]" prompt pointing at the chat box; otherwise it's the first-run welcome.
+ * [onAddCity] opens Preferences → Cities to set/change an area; [onTryMelbourne] adds the
+ * built-in sample offline.
  */
 @Composable
-private fun NoCityState(modifier: Modifier) {
+private fun NoCityState(
+    areaName: String?,
+    onAddCity: () -> Unit,
+    onTryMelbourne: () -> Unit,
+    modifier: Modifier,
+) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(32.dp),
+        // Scrollable + centred so nothing clips at large system font sizes on a small screen.
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        // Warm hero mark — a globe in a tinted circle, echoing the home hero's language.
         Box(
-            Modifier.size(84.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+            Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Filled.Public, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(40.dp))
+            Icon(Icons.Filled.Public, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(46.dp))
+        }
+        Spacer(Modifier.height(22.dp))
+        Text(
+            if (areaName != null) "Explore $areaName" else "Add a city to begin",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            if (areaName != null)
+                "Ask me anything in the box below — I'll find real places live and rank them near you. " +
+                    "No signal? Download $areaName for offline in Preferences → Cities."
+            else
+                "WanderNear is your on-device local guide. Add a city once while you're online — " +
+                    "then it works fully offline, anywhere.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(28.dp))
+        // ONE primary action: go to Preferences → Cities to set (or change) your area.
+        Button(
+            onClick = onAddCity,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+        ) {
+            Icon(Icons.Filled.Add, null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (areaName != null) "Change area" else "Add a city")
+        }
+        // Subordinate: an instant offline sample, only worth offering before an area is set.
+        if (areaName == null) {
+            Spacer(Modifier.height(6.dp))
+            TextButton(onClick = onTryMelbourne) {
+                Text("Try the built-in Melbourne sample")
+            }
         }
         Spacer(Modifier.height(18.dp))
-        Text("No city yet", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
+        // Reinforce the core promise wherever we ask for an area.
         Text(
-            "Add a city to start exploring — it works fully offline afterwards. " +
-                "Open Preferences → Cities → Add a city.",
-            style = MaterialTheme.typography.bodyMedium,
+            "Only the city name is sent when you add one — never your location.",
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )

@@ -302,7 +302,8 @@ private fun AppScaffold(prefsRepo: PreferencesRepository) {
         ) { current ->
             Box(Modifier.fillMaxSize().padding(innerPadding)) {
                 when (current) {
-                    Tab.Explore -> ChatScreen(prefsRepo)
+                    // The "no city yet" welcome sends you here to add one.
+                    Tab.Explore -> ChatScreen(prefsRepo, onAddCity = { tab = Tab.Preferences })
                     Tab.MyTrips -> MyTripsScreen()
                     Tab.Preferences -> PreferencesScreen(prefsRepo)
                 }

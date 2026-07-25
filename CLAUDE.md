@@ -13,10 +13,14 @@ each with a short reason why.
 
 ## Non-negotiable constraints
 
-1. **Offline-first & private.** The data pack and the AI live on the phone. All
-   search and inference happen on-device. No user data ever leaves the phone.
-   Must be fully functional in airplane mode. When online, it silently refreshes
-   the current city's data in the background.
+1. **Online-first & private (pivot, 2026-07-26).** By DEFAULT the app fetches a
+   city's data **live** from the free OSM/Wikipedia APIs over the internet, on
+   demand for what the user asks; **downloading a city for offline use is the
+   user's optional choice**, not required. Offline is the FALLBACK: a downloaded
+   city works with no signal. **Privacy is unchanged and absolute:** data is
+   fetched by AREA NAME only, "near you" is ranked ON-DEVICE, and the user's raw
+   GPS is NEVER sent anywhere. The AI still runs on-device and only rewords the
+   fetched rows. (Was "offline-first"; the owner reversed the default to live.)
 2. **Free to build and run.** Open-source tools and free data sources only. No
    paid APIs, no servers.
 3. **Native Android, portable core.** Kotlin + Jetpack Compose. Core logic
@@ -30,10 +34,16 @@ each with a short reason why.
 
 ## Core architecture principle (how we guarantee #5)
 
-**SQLite is the only source of truth. The AI never retrieves or knows facts.**
+**Real retrieved rows are the only source of truth. The AI never retrieves or
+knows facts.** Two grounded sources feed the SAME retrieval → ranking → grounding
+→ AI-reword path: **LIVE** OSM/Wikipedia results (default, online) and a
+**downloaded SQLite pack** (offline fallback). Either way, every place shown is a
+real fetched row — the AI only rewords them and is rejected if it names a place
+that wasn't retrieved (`GroundingCheck`).
 
-- Retrieve places deterministically with SQL: full-text search + structured
-  filters (diet, category, distance) + ranking. Take the top ~5.
+- Retrieve places deterministically: live from OSM (bounded, category-scoped
+  Overpass query → parse → rank on-device), or with SQL over a downloaded pack
+  (full-text search + structured filters + ranking). Take the top ~5.
 - If retrieval returns **zero rows**, return a fixed "I don't have that in my
   data" message and DO NOT call the AI at all.
 - **Templates first** (Milestone 2): build the friendly answer from the
@@ -79,6 +89,28 @@ never guessed.
 
 ## Milestones
 
+- **ARCHITECTURE PIVOT — Live-first (owner, 2026-07-26).** Reversed the default
+  from offline-first to **online-first**: the app fetches data LIVE from OSM as
+  you ask, and downloading a city is optional (see non-negotiable #1). Grounding
+  and the GPS-never-leaves rule are unchanged. Also (pre-pivot, same day) the
+  bundled Melbourne stopped being the auto-loaded default — a fresh install shows
+  an "add a city" welcome; Melbourne is an optional offline sample you add.
+    - **L1** ✅ Done: the live path end-to-end. New `core/model/ActiveArea` (a
+      name + bbox, set by the user — only the NAME is sent). New `data/LiveSource`
+      does a bounded, category-scoped Overpass fetch for the area, parses to
+      grounded `Place[]`, filters by the same spec rules as the pack, and ranks
+      near you ON-DEVICE. `OsmClassifier` gained `overpassBodyBbox` (sharing its
+      selectors with the download query so they can't drift) + `address` (now
+      shared with the pack builder). `PreferencesRepository.activeArea` stores the
+      area; `LiveSource.isOnline` picks live vs. the offline pack. Chat's
+      `runSearch` branches live/pack; the Cities card's confirm dialog now offers
+      **Use live** (default) or **Download** (optional offline). Verified on a
+      Pixel 6 over WiFi: set area = Werribee → "parks" → real live OSM parks
+      (Conquest Drive/Mulberry Terrace/Kelly Park…) reworded by on-device Gemma,
+      grounding-checked, with Directions/Save cards. `CityDatabase` seeding is now
+      file-based (a fresh install has no city; "Add built-in Melbourne" copies the
+      5 MB asset on demand, offline — verified it persists). Remaining: **L2**
+      live home cards, **L3** offline-fallback polish + optional-download UX.
 - **M1 — Data pipeline** ✅ Done: Melbourne fetched from OSM + Wikipedia into
   SQLite (`pipeline/`) — 20,092 places + full-text search; proven with
   "halal restaurants", "temples", "vegetarian near me".

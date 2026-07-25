@@ -12,9 +12,20 @@ attractions, outdoor spots) with a short reason why. It also has a private
 **Travel Journal**. Everything runs on the phone; nothing leaves it; it works in
 airplane mode. Free/open tools and data only.
 
-**Non-negotiables:** offline-first & private · free to build/run · native Android
-with an Android-free portable `core/` · one generic pipeline for ANY city ·
-**never hallucinate** (every recommendation grounded in a retrieved DB row).
+**Non-negotiables:** **online-first & private** (offline is the fallback — see the
+pivot below) · free to build/run · native Android with an Android-free portable
+`core/` · one generic pipeline for ANY city · **never hallucinate** (every
+recommendation grounded in a real retrieved row — live OSM or a downloaded pack).
+
+> **🔄 ARCHITECTURE PIVOT — live-first (owner, 2026-07-26).** The default flipped
+> from offline-first to **online-first**: the app fetches data LIVE from free OSM
+> as you ask, and **downloading a city is optional** (for offline use). Grounding
+> and "GPS never leaves the phone" are unchanged — data is fetched by AREA NAME and
+> ranked near-you on-device; the on-device AI only rewords the live rows. **L1 is
+> done and verified** (Werribee, live "parks" → real grounded results). Bundled
+> Melbourne is no longer the auto-default — a fresh install shows an "add a city"
+> welcome; Melbourne is an optional offline sample. See CLAUDE.md → "ARCHITECTURE
+> PIVOT". Remaining: L2 (live home cards), L3 (offline-fallback + download UX).
 
 ## Status: M1–M6.6 + Travel Mode (TM.1–TM.3) + PT.1 + all-faiths worship + personalised home + **full UI redesign** ✅ — all verified on device and pushed
 
