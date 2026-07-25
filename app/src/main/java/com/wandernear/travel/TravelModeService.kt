@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.location.LocationListener
+import android.net.Uri
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -148,14 +149,20 @@ class TravelModeService : Service() {
 
             val hit = db.nearbyNotable(origin, RADIUS_KM).firstOrNull { it.id !in alerted } ?: return@launch
             if (!alerted.add(hit.id)) return@launch          // another fix just alerted it
-            val sub = hit.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Worth a visit"
-            val dist = distanceLabel(hit.distanceKm)?.let { " · $it away" } ?: ""
-            Notifier.notifyTravel(
-                this@TravelModeService,
-                "travel:${hit.id}".hashCode(),
-                "Worth a visit nearby",
-                "${hit.name} — $sub$dist",
-            )
+            if (!hit.summary.isNullOrBlank()) {
+                // This place has a real write-up in the pack → offer to read or hear its story.
+                notifyStory(hit)
+            } else {
+                // No story to tell — just flag it as worth a look.
+                val sub = hit.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Worth a visit"
+                val dist = distanceLabel(hit.distanceKm)?.let { " · $it away" } ?: ""
+                Notifier.notifyTravel(
+                    this@TravelModeService,
+                    "travel:${hit.id}".hashCode(),
+                    "Worth a visit nearby",
+                    "${hit.name} — $sub$dist",
+                )
+            }
         }
     }
 
@@ -169,6 +176,51 @@ class TravelModeService : Service() {
             NotificationManagerCompat.from(this).notify(NOTIF_ID, ongoingNotification(places))
         } catch (e: SecurityException) {
             // Notifications revoked mid-session — the service stops on its own; don't crash.
+        }
+    }
+
+    /**
+     * The "there's a story here" alert for a notable place that has a real write-up.
+     * Ask-first: it only OFFERS. Both tap and "Listen" open the story in the app — "Listen"
+     * additionally reads it aloud there. The APP owns the speech engine (TextToSpeech in
+     * MainActivity), so a `getActivity` intent is always safe: we never start a background
+     * service just to talk (which could linger or be blocked). Same id + de-dup as the plain
+     * alert → ONE alert per place per session. Every word is the grounded stored summary.
+     */
+    private fun notifyStory(hit: Place) {
+        Notifier.createTravelAlertChannel(this)
+        // `speak` = true → read aloud on open (the "Listen" action); false → just show it (tap).
+        fun open(speak: Boolean) = PendingIntent.getActivity(
+            this, "story:$speak:${hit.id}".hashCode(),
+            Intent(this, MainActivity::class.java)
+                .putExtra(EXTRA_STORY_NAME, hit.name)
+                .putExtra(EXTRA_STORY_SUMMARY, hit.summary)
+                .putExtra(EXTRA_STORY_LAT, hit.lat)
+                .putExtra(EXTRA_STORY_LNG, hit.lng)
+                .putExtra(EXTRA_SPEAK, speak),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val directions = PendingIntent.getActivity(
+            this, "dir:${hit.id}".hashCode(),
+            Intent(Intent.ACTION_VIEW, Uri.parse("geo:${hit.lat},${hit.lng}?q=${hit.lat},${hit.lng}(${Uri.encode(hit.name)})")),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val dist = distanceLabel(hit.distanceKm)?.let { " · $it away" } ?: ""
+        val notif = NotificationCompat.Builder(this, Notifier.TRAVEL_ALERT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("There's a story here")
+            .setContentText("${hit.name}$dist — tap to read, or listen")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("${hit.name} is right nearby$dist. Tap to read its story, or press Listen to hear it."))
+            .setContentIntent(open(false))
+            .addAction(0, "Listen", open(true))
+            .addAction(0, "Directions", directions)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        try {
+            NotificationManagerCompat.from(this).notify("travel:${hit.id}".hashCode(), notif)
+        } catch (e: SecurityException) {
+            // Notifications revoked mid-session — never crash.
         }
     }
 
@@ -228,6 +280,12 @@ class TravelModeService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.wandernear.travel.STOP"
+        // Extras shared with MainActivity's story reader (opened from a story alert).
+        const val EXTRA_STORY_NAME = "wn.story.name"
+        const val EXTRA_STORY_SUMMARY = "wn.story.summary"
+        const val EXTRA_STORY_LAT = "wn.story.lat"
+        const val EXTRA_STORY_LNG = "wn.story.lng"
+        const val EXTRA_SPEAK = "wn.story.speak"     // true → read it aloud on open ("Listen")
         private const val NOTIF_ID = 4201
         private const val MIN_TIME_MS = 120_000L    // ~2 min between location checks…
         private const val MIN_DISTANCE_M = 120f     // …or when you've moved ~120 m

@@ -85,7 +85,9 @@ object Notifier {
         NotificationManagerCompat.from(context).notify(id, notification)
     }
 
-    private fun createTravelAlertChannel(context: Context) {
+    /** Creates the audible "Nearby places" channel. Public so the Travel Mode service
+     *  can post its own richer "story" alert on the same channel. Safe to call repeatedly. */
+    fun createTravelAlertChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 TRAVEL_ALERT_CHANNEL_ID, "Nearby places", NotificationManager.IMPORTANCE_DEFAULT,

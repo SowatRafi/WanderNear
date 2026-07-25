@@ -262,6 +262,25 @@ never guessed.
       the service and the home screen share one rule instead of each deriving it. One shared
       `NearbyCard` renders both cards at three lines per entry instead of five, and
       distances read as metres up close, rounded to 10 m (a fix isn't metre-accurate).
+- **TM.4 — Travel-buddy story alerts + Listen** ✅ (2026-07-25). While Travel Mode is on and you
+  pass a place that has a real write-up in the pack (a Wikipedia `summary`), the SINGLE grounded
+  alert becomes a "there's a story here" nudge: **Read** opens an in-app bottom sheet with the
+  stored summary + CC BY-SA credit + Directions, and **Listen** reads it aloud with the phone's
+  on-device `TextToSpeech` (offline, free — it only ever speaks the grounded summary, never
+  anything invented). Ask-first (it only OFFERS); same notification id + `alerted` de-dup as the
+  plain "worth a visit" alert, so it stays ONE alert per place per session — never a stream.
+  Places WITHOUT a summary keep the plain "Worth a visit nearby" alert. This is the vision's
+  "historic site → want the history?" flow, and the honest take on "hidden gems": we surface
+  grounded notable/attraction places (`nearbyNotable`), never claim "locals love this". No GPS
+  leaves the phone; TTS is on-device. `MainActivity` is now `singleTop` with a story reader sheet
+  (`StorySheet`); the TTS engine lives in `TravelModeService` (one owner, `ACTION_LISTEN`).
+  Verified on a Pixel 6 (reader sheet + Listen wired, no crash; the alert firing is best seen by
+  travelling near a summary-bearing place). **Follow-ups same day:** warmed the home **hero** (a
+  time-aware greeting — "Good morning/afternoon/evening" + a pin on the place name — replacing the
+  clinical "WHERE YOU ARE"), and added **deleting a downloaded city** (a trash button per pack in
+  the Cities card; the bundled Melbourne can't be deleted; deleting the ACTIVE city falls back to
+  Melbourne first — closes the M6.4d "no way to delete a pack" gap; `CityPackBuilder.deleteInstalled`
+  only touches `packs/`).
 - **PT — Prayer times + mosque awareness** (from the owner's "no guidebook" vision).
     - **PT.1** ✅ Done. The five daily prayer times, **calculated ON-DEVICE** (offline, free)
       — `core/prayer/PrayerTimes.kt`, a pure-Kotlin PrayTimes.org port, unit-tested against

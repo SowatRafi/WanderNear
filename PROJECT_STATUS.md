@@ -27,6 +27,14 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 > pill/FAB input bar, and matching Preferences + My Trips. See `ui/theme/` + `ui/Components.kt`.
 > No data/grounding logic changed. Verified on a Pixel 6 in light AND dark.
 
+> **Travel-buddy + polish (2026-07-25):** **TM.4** — while Travel Mode is on and you pass a place
+> with a real write-up, the single grounded alert offers **Read** (an in-app story sheet with the
+> stored Wikipedia summary + CC BY-SA + Directions) and **Listen** (on-device `TextToSpeech` reads
+> it aloud, offline). Ask-first, still one de-duped alert per place, nothing invented, no GPS off
+> the phone (the vision's "want the history?" flow). Plus the home **hero** now opens with a warm
+> time-aware greeting instead of "WHERE YOU ARE", and you can **delete a downloaded city** (trash
+> button in the Cities card; bundled Melbourne is protected). Verified on a Pixel 6.
+
 | Milestone | Status | What it delivered |
 |---|---|---|
 | **M1** Data pipeline | ✅ | Python (`pipeline/`) builds `melbourne.db` from OSM Overpass + Wikipedia. Now **22,624 places** (incl. 148 hospital, 917 parking, 868 fuel, 480 shopping, 114 police; 3,858 with a suburb) + FTS. |
@@ -51,7 +59,7 @@ with an Android-free portable `core/` · one generic pipeline for ANY city ·
 2. **M7** — Travel Journal v2: voice + video memos, and a smarter "you forgot this" bucket-list nudge when you return near a saved place.
 3. **Bigger vision (owner, 2026-07-24)** — "a traveller needs no guidebook": drive-past worth-a-visit alerts (TM.2 has the mechanism), an ask-first "want the history?" flow at historic sites, prayer-time + nearest-mosque awareness, accommodation. See the "Vision backlog" section below for what's free/groundable vs not.
 
-Known gaps, deliberately deferred: no way to DELETE a downloaded pack yet; a download is tied to the Preferences screen (same limit as the AI-model download); downloaded packs have no Wikipedia summaries (v1 skips enrichment), so "Worth visiting nearby" is thinner there than in bundled Melbourne.
+Known gaps, deliberately deferred: a download is tied to the Preferences screen (same limit as the AI-model download); downloaded packs have no Wikipedia summaries (v1 skips enrichment), so "Worth visiting nearby" is thinner there than in bundled Melbourne — and Travel Mode "story" alerts only fire in the bundled city until enrichment lands. (**Deleting a downloaded pack is now supported** — a trash button per pack in the Cities card.)
 
 ## Tech stack (EXACT pinned versions — don't change casually)
 
