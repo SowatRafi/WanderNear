@@ -14,9 +14,10 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -146,10 +147,9 @@ fun CitiesSection(repo: PreferencesRepository) {
         }
     }
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Cities", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
+    WnCard {
+            SectionHeader(Icons.Filled.Public, "Cities")
+            Spacer(Modifier.height(6.dp))
             Text(
                 "Switch between the cities you have offline, or add a new one. " +
                     "Adding needs internet once — after that the city works with no signal at all.",
@@ -265,7 +265,6 @@ fun CitiesSection(repo: PreferencesRepository) {
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
             }
-        }
     }
 
     // The confirmation, named after exactly what it does.

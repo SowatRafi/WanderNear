@@ -11,13 +11,13 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Card
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -28,7 +28,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.wandernear.core.model.UserPreferences
@@ -112,29 +111,28 @@ fun TravelModeSection(repo: PreferencesRepository) {
         scope.launch { repo.setTravelMode(false) }
     }
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Travel Mode", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "While on, WanderNear watches for worth-visiting spots near you and notifies you — " +
-                    "with a visible \"Travel Mode is on\" banner the whole time. It uses location only " +
-                    "while on; nothing leaves your phone. Turn it off any time.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    WnCard {
+        SectionHeader(Icons.Filled.TravelExplore, "Travel Mode")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "While on, WanderNear watches for worth-visiting spots near you and notifies you — " +
+                "with a visible \"Travel Mode is on\" banner the whole time. It uses location only " +
+                "while on; nothing leaves your phone. Turn it off any time.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(14.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Notify me about nearby spots", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = prefs.travelModeOn,
+                onCheckedChange = { on -> if (on) enable() else disable() },
             )
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Notify me about nearby spots")
-                Switch(
-                    checked = prefs.travelModeOn,
-                    onCheckedChange = { on -> if (on) enable() else disable() },
-                )
-            }
         }
     }
 }

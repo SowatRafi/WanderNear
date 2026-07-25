@@ -1,14 +1,12 @@
 package com.wandernear.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Card
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Diversity3
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,7 +15,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.wandernear.core.model.Faith
 import com.wandernear.core.model.UserPreferences
@@ -49,69 +46,67 @@ fun FaithSettingsSection(repo: PreferencesRepository) {
     val scope = rememberCoroutineScope()
     val prefs by repo.preferences.collectAsState(initial = UserPreferences())
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Faith & worship", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Optional: show the nearest place of worship for your faith. For Islam, also " +
-                    "today's calculated prayer times. Service times come from the place itself — " +
-                    "we never invent one.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    WnCard {
+        SectionHeader(Icons.Filled.Diversity3, "Faith & worship")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Optional: show the nearest place of worship for your faith. For Islam, also " +
+                "today's calculated prayer times. Service times come from the place itself — " +
+                "we never invent one.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(14.dp))
+        Text("Your faith", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // "None" clears the feature; then one chip per supported faith.
+            FilterChip(
+                selected = prefs.faith.isBlank(),
+                onClick = { scope.launch { repo.setFaith("") } },
+                label = { Text("None") },
             )
-            Spacer(Modifier.height(12.dp))
-            Text("Your faith", style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(6.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // "None" clears the feature; then one chip per supported faith.
+            Faith.entries.forEach { faith ->
                 FilterChip(
-                    selected = prefs.faith.isBlank(),
-                    onClick = { scope.launch { repo.setFaith("") } },
-                    label = { Text("None") },
+                    selected = prefs.faith == faith.key,
+                    onClick = { scope.launch { repo.setFaith(faith.key) } },
+                    label = { Text(faith.label) },
                 )
-                Faith.entries.forEach { faith ->
+            }
+        }
+
+        // Prayer-time calc knobs only matter for Islam, so hide them otherwise.
+        if (prefs.faith == Faith.MUSLIM.key) {
+            Spacer(Modifier.height(14.dp))
+            Text("Calculation method", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                METHOD_LABELS.forEach { (key, label) ->
                     FilterChip(
-                        selected = prefs.faith == faith.key,
-                        onClick = { scope.launch { repo.setFaith(faith.key) } },
-                        label = { Text(faith.label) },
+                        selected = prefs.prayerMethod == key,
+                        onClick = { scope.launch { repo.setPrayerMethod(key) } },
+                        label = { Text(label) },
                     )
                 }
             }
-
-            // Prayer-time calc knobs only matter for Islam, so hide them otherwise.
-            if (prefs.faith == Faith.MUSLIM.key) {
-                Spacer(Modifier.height(12.dp))
-                Text("Calculation method", style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    METHOD_LABELS.forEach { (key, label) ->
-                        FilterChip(
-                            selected = prefs.prayerMethod == key,
-                            onClick = { scope.launch { repo.setPrayerMethod(key) } },
-                            label = { Text(label) },
-                        )
-                    }
+            Spacer(Modifier.height(12.dp))
+            Text("Asr method", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ASR_LABELS.forEach { (key, label) ->
+                    FilterChip(
+                        selected = prefs.prayerAsr == key,
+                        onClick = { scope.launch { repo.setPrayerAsr(key) } },
+                        label = { Text(label) },
+                    )
                 }
-                Spacer(Modifier.height(10.dp))
-                Text("Asr method", style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ASR_LABELS.forEach { (key, label) ->
-                        FilterChip(
-                            selected = prefs.prayerAsr == key,
-                            onClick = { scope.launch { repo.setPrayerAsr(key) } },
-                            label = { Text(label) },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Using: ${methodLabel(prefs.prayerMethod)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Using: ${methodLabel(prefs.prayerMethod)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

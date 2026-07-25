@@ -30,7 +30,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -58,6 +57,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material3.Icon
+import com.wandernear.ui.theme.categoryTint
 import coil.compose.AsyncImage
 import com.wandernear.data.journal.BucketItem
 import com.wandernear.data.journal.JournalDao
@@ -97,40 +104,68 @@ fun MyTripsScreen() {
 
 @Composable
 private fun TripList(places: List<SavedPlace>, onOpen: (SavedPlace) -> Unit) {
-    if (places.isEmpty()) {
-        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("No saved places yet", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Tap “Save” on any recommendation to keep it here.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 6.dp)) {
+            Text("My Trips", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Places you've saved — with your notes, visits and photos.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        return
-    }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(places) { place ->
-            Card(Modifier.fillMaxWidth().clickable { onOpen(place) }) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(place.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    place.subcategory?.let {
-                        Text(pretty(it), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+
+        if (places.isEmpty()) {
+            Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.size(84.dp).clip(CircleShape).background(MaterialTheme.colorScheme.tertiaryContainer),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Filled.Bookmark, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(38.dp))
                     }
-                    if (place.notes.isNotBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            place.notes,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                        )
+                    Spacer(Modifier.height(18.dp))
+                    Text("No saved places yet", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Tap “Save” on any recommendation and it lands here, ready for your notes and photos.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+            }
+            return
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(places) { place ->
+                val tint = categoryTint(place.category ?: "", isSystemInDarkTheme())
+                WnCard(onClick = { onOpen(place) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CategoryBadge(place.category ?: "")
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(place.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            place.subcategory?.let {
+                                Text(pretty(it), style = MaterialTheme.typography.labelMedium, color = tint.icon, fontWeight = FontWeight.Medium)
+                            }
+                            if (place.notes.isNotBlank()) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    place.notes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -162,9 +197,16 @@ private fun TripDetail(dao: JournalDao, placeId: Long, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
     ) {
-        Text(loaded.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        loaded.subcategory?.let {
-            Text(pretty(it), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        val headerTint = categoryTint(loaded.category ?: "", isSystemInDarkTheme())
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CategoryBadge(loaded.category ?: "", size = 48.dp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(loaded.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                loaded.subcategory?.let {
+                    Text(pretty(it), style = MaterialTheme.typography.labelLarge, color = headerTint.icon)
+                }
+            }
         }
 
         // --- Notes ---
@@ -425,8 +467,8 @@ private fun BucketAddRow(onAdd: (String) -> Unit) {
 @Composable
 private fun SectionTitle(title: String) {
     Spacer(Modifier.height(24.dp))
-    Text(title, style = MaterialTheme.typography.titleMedium)
-    Spacer(Modifier.height(8.dp))
+    Text(title, style = MaterialTheme.typography.titleLarge)
+    Spacer(Modifier.height(10.dp))
 }
 
 /** "place_of_worship" → "Place of worship". */

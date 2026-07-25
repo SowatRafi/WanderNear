@@ -1,0 +1,10 @@
+<resources>
+    <!-- Dark variant: a dark, no-title-bar window so there's no bright flash before
+         Compose draws in dark mode. Transparent bars for edge-to-edge, light bar icons. -->
+    <style name="Theme.WanderNear" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

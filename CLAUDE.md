@@ -303,6 +303,23 @@ never guessed.
       understanding back ("Buddhist places of worship"). "holy"/"sacred" deliberately excluded
       (they appear in place names like "Holy Basil"). Verified on a Pixel 6 (Buddhist → 3 real
       Buddhist temples) + new JVM tests. Grounded as ever — every card is a real retrieved row.
+- **UI — Full visual redesign** ✅ (2026-07-25). The app was restyled from the bare default
+  Material look (`MaterialTheme {}` with no colours/type/shapes + emoji nav icons) into a warm,
+  branded **teal + amber "travel companion"** design system. New `ui/theme/`: a hand-tuned light
+  AND dark `ColorScheme` (no dynamic colour — one identity on every phone), a confident type
+  scale (system font, no APK bloat), rounded `Shapes`, and `WanderNearTheme` (edge-to-edge +
+  status-bar icon contrast). New `ui/Components.kt`: `WnCard` (clean white/dark card, shadow in
+  light, hairline in dark), `SectionHeader`, `CategoryBadge`/`categoryIcon` (per-category colour;
+  faith-aware for worship), `WnActionButton` + `DirectionsButton`/`SaveButton`/`CallButton`/
+  `WebsiteButton`, `MoodChip`, `ActionRow` (wrapping FlowRow). Added
+  `material-icons-extended` (deliberate reversal of the old "hand-roll 2 icons" call — a whole UI
+  needs a consistent icon set; R8 strips the unused ones). Every screen reworked: a welcoming
+  home **hero** (locality + city essentials as pills, replacing the grey info box), colourful
+  place cards (badge + name + meta + icon action pills), a redesigned FaithCard/prayer card,
+  chat **bubbles** with tails + rich recommendation cards, a modern **pill + circular-FAB** input
+  bar, and matching Preferences (icon section headers, `WnCard` settings) + My Trips (badged list
+  cards, nicer empty state). **No data, retrieval, grounding, or `core/` logic changed** — purely
+  presentation. Verified on a Pixel 6 in BOTH light and dark. Nav tab "Ask" → "Explore".
 - **M7 — Travel Journal v2**: voice + video diary memos, and a smarter "you forgot
   this" nudge that surfaces unfinished bucket-list items when you return near a place.
 - **TM — Travel Mode** ✅ Done (TM.1–TM.2): an opt-in Preferences toggle that runs

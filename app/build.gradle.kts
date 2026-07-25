@@ -44,6 +44,8 @@ dependencies {
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.material3)
+    // Vector icons for the UI (nav, categories, actions). Unused icons are stripped by R8.
+    implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
     // Room — the traveller's private, editable journal database.
     implementation(libs.androidx.room.runtime)

@@ -16,7 +16,16 @@ airplane mode. Free/open tools and data only.
 with an Android-free portable `core/` · one generic pipeline for ANY city ·
 **never hallucinate** (every recommendation grounded in a retrieved DB row).
 
-## Status: M1–M6.6 + Travel Mode (TM.1–TM.3) + PT.1 + all-faiths worship + personalised home ✅ — all verified on device and pushed (latest `d76d01b`)
+## Status: M1–M6.6 + Travel Mode (TM.1–TM.3) + PT.1 + all-faiths worship + personalised home + **full UI redesign** ✅ — all verified on device and pushed
+
+> **UI redesign (2026-07-25):** the whole app was restyled from the bare default-Material
+> look into a warm, branded **teal + amber travel** design system — a real light/dark
+> `ColorScheme`, a tuned type scale, rounded shapes, edge-to-edge, proper vector nav icons
+> (material-icons-extended), and reusable components (`WnCard`, `SectionHeader`,
+> `CategoryBadge` with per-category colour, `WnActionButton`/`MoodChip`). Every screen was
+> reworked: a welcoming home **hero**, colourful place cards, modern chat bubbles + a
+> pill/FAB input bar, and matching Preferences + My Trips. See `ui/theme/` + `ui/Components.kt`.
+> No data/grounding logic changed. Verified on a Pixel 6 in light AND dark.
 
 | Milestone | Status | What it delivered |
 |---|---|---|
@@ -52,7 +61,8 @@ Known gaps, deliberately deferred: no way to DELETE a downloaded pack yet; a dow
 - **Data:** SQLite opened directly for the read-only city pack (FTS4); **Room 2.8.4** (via KSP) for the writable journal; **DataStore 1.1.1** for preferences.
 - **On-device AI:** `com.google.ai.edge.litertlm:litertlm-android:0.14.0`, model `gemma-4-E2B-it.litertlm` (~2.6 GB, Apache-2.0, ungated) from HF `litert-community/gemma-4-E2B-it-litert-lm`.
 - **Voice:** `com.alphacephei:vosk-android:0.3.75` + `vosk-model-small-en-us-0.15` (~40 MB) bundled in `app/src/main/resources/` (Java resources, NOT assets).
-- **Also:** Coil 2.7.0 (photos), WorkManager 2.9.1 (reminders), JUnit 4.13.2 (unit tests).
+- **Also:** Coil 2.7.0 (photos), WorkManager 2.9.1 (reminders), JUnit 4.13.2 (unit tests),
+  `androidx.compose.material:material-icons-extended` (UI icons; version from the BOM).
 - Data pipeline: Python 3 + `requests` (only dep).
 
 ## Repo layout
@@ -80,6 +90,8 @@ app/src/main/
     travel/      TravelModeService (WHILE-IN-USE location service + "around you now" digest)
     ui/          ChatScreen (traveller home + chat), PreferencesScreen, MyTripsScreen,
                  AiSettingsSection, TravelModeSection, CitiesSection, FaithSettingsSection
+      theme/       Color (light+dark ColorScheme + categoryTint), Type, Shape, Theme (WanderNearTheme)
+      Components.kt WnCard, SectionHeader, CategoryBadge/categoryIcon, WnActionButton, MoodChip, ActionRow
   test/          JVM unit tests (GroundingCheck, QueryParser, Recommender, OsmClassifier, Nearby, Festivals, PrayerTimes)
 CLAUDE.md                     conventions, decisions, milestone log
 PROJECT_STATUS.md             this file

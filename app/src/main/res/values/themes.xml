@@ -1,5 +1,12 @@
 <resources>
-    <!-- A minimal base theme with no title bar. Compose (Material 3) does the
-         real theming; this just styles the window before Compose draws. -->
-    <style name="Theme.WanderNear" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- A minimal base theme with no title bar. Compose (Material 3) does the real
+         theming; this just styles the window before Compose draws. Transparent system
+         bars so the app can draw edge-to-edge; the warm window background matches the
+         Compose theme so launch shows no white flash. -->
+    <style name="Theme.WanderNear" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
 </resources>

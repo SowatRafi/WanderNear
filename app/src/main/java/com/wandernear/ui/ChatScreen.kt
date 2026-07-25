@@ -15,7 +15,9 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.heightIn
@@ -39,15 +41,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -81,6 +82,7 @@ import com.wandernear.travel.TravelModeService
 import com.wandernear.core.response.GroundingCheck
 import com.wandernear.core.response.Recommender
 import com.wandernear.core.retrieval.QueryParser
+import com.wandernear.ui.theme.categoryTint
 import com.wandernear.data.CityDatabase
 import com.wandernear.data.LocationProvider
 import com.wandernear.data.PreferencesRepository
@@ -97,8 +99,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Celebration
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -504,7 +521,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository) {
                 around = around,
                 notable = notable,
                 forYou = forYou,
-                examples = exampleChips(prefs),
+                examples = remember(prefs) { exampleChips(prefs) },
                 festivals = festivals,
                 faith = Faith.fromKey(prefs.faith),
                 prayerTimes = prayerTimes,
@@ -582,25 +599,27 @@ private fun EmptyState(
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Top,
     ) {
-        // Where you are (your actual suburb when we have a fix), plus a one-tap dialer
-        // for the local emergency number.
+        // A warm welcome: where you are + the city's essentials — a hero, not a grey box.
         city?.let {
-            CityInfoCard(it, locality, onCallEmergency)
-            Spacer(Modifier.height(16.dp))
+            HomeHeader(it, locality, onCallEmergency)
+            Spacer(Modifier.height(24.dp))
         }
-        // Primary action FIRST: an "ask" app should show what you can ask right away,
-        // not bury the chips under every info card.
-        Text("What are you in the mood for?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(12.dp))
+        // Primary action FIRST: an "explore" app should show what you can ask right away.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.AutoAwesome, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("What are you in the mood for?", style = MaterialTheme.typography.titleLarge)
+        }
+        Spacer(Modifier.height(14.dp))
         FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             examples.forEach { example ->
-                AssistChip(onClick = { onExample(example) }, label = { Text(example) })
+                MoodChip(example) { onExample(example) }
             }
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(24.dp))
 
         // Glanceable extras below — each trimmed to stay light; tap through for detail.
         // Faith card: prayer times (Islam) and/or the nearest place of worship.
@@ -613,28 +632,33 @@ private fun EmptyState(
         val shown = HashSet<Int>()
         // Travel Mode only: nearest food / shopping / outdoors from the live fix.
         if (around.isNotEmpty()) {
-            NearbyCard("Around you now", around, onDirections, onCall)
+            NearbyCard("Around you now", Icons.Filled.MyLocation, around, onDirections, onCall)
             shown += around.map { it.id }
             Spacer(Modifier.height(16.dp))
         }
         // Your picks first: nearby places matching your selected interests. Shown only
         // when you've chosen interests in Preferences.
-        val forYouShown = forYou.filterNot { it.id in shown }
+        // distinctBy name: OSM often has the same place as two nodes (e.g. a church as a
+        // node AND a building), so without this the same suggestion can appear twice.
+        val forYouShown = forYou.filterNot { it.id in shown }.distinctBy { it.name }
         if (forYouShown.isNotEmpty()) {
-            NotableCard("For you", forYouShown, onDirections, onSave)
-            shown += forYouShown.map { it.id }
+            NotableCard("For you", Icons.Filled.Favorite, forYouShown, onDirections, onSave)
+            // Only the rows actually rendered (NotableCard shows NOTABLE_SHOWN) count as
+            // "shown" — otherwise an un-displayed 4th+ "For you" place would be wrongly
+            // removed from "Worth visiting nearby" below.
+            shown += forYouShown.take(NOTABLE_SHOWN).map { it.id }
             Spacer(Modifier.height(16.dp))
         }
         // Notable places worth visiting near you. Hidden when the pack has none nearby
         // that a card above didn't already show.
-        val notableShown = notable.filterNot { it.id in shown }
+        val notableShown = notable.filterNot { it.id in shown }.distinctBy { it.name }
         if (notableShown.isNotEmpty()) {
-            NotableCard("Worth visiting nearby", notableShown, onDirections, onSave)
+            NotableCard("Worth visiting nearby", Icons.Filled.Star, notableShown, onDirections, onSave)
             Spacer(Modifier.height(16.dp))
         }
         // Nearest police / hospital / fuel / parking. Hidden when the pack has none.
         if (essentials.isNotEmpty()) {
-            NearbyCard("Daily needs near you", essentials, onDirections, onCall)
+            NearbyCard("Daily needs near you", Icons.Filled.NearMe, essentials, onDirections, onCall)
             Spacer(Modifier.height(16.dp))
         }
         // The city's annual festivals. Absent when Wikipedia lists none for this city.
@@ -661,57 +685,67 @@ private fun FaithCard(
     onOpenUrl: (String) -> Unit,
 ) {
     val method = runCatching { PrayerTimes.Method.valueOf(methodKey) }.getOrNull()
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            // Prayer times: Islam only.
-            times?.let {
-                Text("Prayer times today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                PrayerRow("Fajr", it.fajr)
-                PrayerRow("Sunrise", it.sunrise)
-                PrayerRow("Dhuhr", it.dhuhr)
-                PrayerRow("Asr", it.asr)
-                PrayerRow("Maghrib", it.maghrib)
-                PrayerRow("Isha", it.isha)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Calculated · ${method?.label ?: methodKey}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+    WnCard {
+        // Prayer times: Islam only.
+        times?.let {
+            SectionHeader(Icons.Filled.Schedule, "Prayer times today")
+            Spacer(Modifier.height(12.dp))
+            PrayerRow("Fajr", it.fajr)
+            PrayerRow("Sunrise", it.sunrise)
+            PrayerRow("Dhuhr", it.dhuhr)
+            PrayerRow("Asr", it.asr)
+            PrayerRow("Maghrib", it.maghrib)
+            PrayerRow("Isha", it.isha)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Calculated · ${method?.label ?: methodKey}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        // Nearest real place of worship for this faith — grounded. Its service time
+        // isn't calculable, so we point to the place's own website/phone, never invent.
+        place?.let { p ->
+            if (times != null) {
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                Spacer(Modifier.height(14.dp))
             }
-            // Nearest real place of worship for this faith — grounded. Its service time
-            // isn't calculable, so we point to the place's own website/phone, never invent.
-            place?.let { p ->
-                if (times != null) Spacer(Modifier.height(12.dp))
-                Text(
-                    "Nearest ${faith.placeType}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                val meta = listOfNotNull(p.name, distanceLabel(p.distanceKm)?.let { "$it away" }).joinToString(" · ")
-                Text(meta, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Text(
-                    faith.serviceNote,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onDirections(p) }) { Text("Directions") }
-                    p.phone?.let { ph -> TextButton(onClick = { onCall(ph) }) { Text("Call") } }
-                    p.website?.let { w -> TextButton(onClick = { onOpenUrl(w) }) { Text("Website") } }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                CategoryBadge("worship", p.religion)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(p.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    val meta = listOfNotNull(
+                        "Nearest ${faith.placeType}",
+                        distanceLabel(p.distanceKm)?.let { "$it away" },
+                    ).joinToString(" · ")
+                    Spacer(Modifier.height(1.dp))
+                    Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(faith.serviceNote, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    ActionRow {
+                        DirectionsButton { onDirections(p) }
+                        p.phone?.let { ph -> CallButton { onCall(ph) } }
+                        p.website?.let { w -> WebsiteButton { onOpenUrl(w) } }
+                    }
                 }
             }
         }
     }
 }
 
-/** One "Fajr    05:56" line in the prayer card. */
+/** One "Fajr … 05:56" line: the prayer on the left, its calculated time (in the brand
+ *  colour) on the right. */
 @Composable
 private fun PrayerRow(name: String, hour: Double) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(104.dp))
-        Text(PrayerTimes.format(hour), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+    Row(Modifier.fillMaxWidth().heightIn(min = 32.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(
+            PrayerTimes.format(hour),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 
@@ -731,45 +765,49 @@ private fun FestivalsCard(events: List<CityEvent>, onOpen: (String) -> Unit) {
     // festivals with no way to ever see them.
     var expanded by remember { mutableStateOf(false) }
     val shown = if (expanded) events else events.take(FESTIVALS_SHOWN)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Annual festivals here", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "Dates change each year — check before you go.",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(10.dp))
-            // Names only — glanceable; tap one to read it on Wikipedia (which also
-            // credits CC BY-SA). No paragraphs on the home screen.
-            shown.forEachIndexed { index, event ->
-                if (index > 0) Spacer(Modifier.height(4.dp))
-                val url = event.summaryUrl
+    WnCard {
+        SectionHeader(Icons.Filled.Celebration, "Annual festivals here")
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Dates change each year — check before you go.",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(10.dp))
+        // Names only — glanceable; tap one to read it on Wikipedia (which also credits
+        // CC BY-SA). A chevron marks the ones you can open. No paragraphs on the home.
+        shown.forEach { event ->
+            val url = event.summaryUrl
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    .let { if (url != null) it.clickable { onOpen(url) } else it },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
                     event.name,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = if (url != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 44.dp)
-                        .let { if (url != null) it.clickable { onOpen(url) } else it }
-                        .wrapContentHeight(),
+                    modifier = Modifier.weight(1f),
                 )
+                if (url != null) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Open article", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                }
             }
-            if (!expanded && events.size > FESTIVALS_SHOWN) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "…and ${events.size - FESTIVALS_SHOWN} more",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 44.dp)
-                        .clickable { expanded = true }
-                        .wrapContentHeight(),
-                )
-            }
+        }
+        if (!expanded && events.size > FESTIVALS_SHOWN) {
+            Text(
+                "…and ${events.size - FESTIVALS_SHOWN} more",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    .clickable { expanded = true }
+                    .wrapContentHeight(),
+            )
         }
     }
 }
@@ -780,61 +818,131 @@ private fun FestivalsCard(events: List<CityEvent>, onOpen: (String) -> Unit) {
  * places) and "For you" (places matching your chosen interests). Never invented.
  */
 @Composable
-private fun NotableCard(title: String, places: List<Place>, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            // A few, glanceable: name + kind + distance. The full Wikipedia "why" is one
-            // tap away in the chat (ask about the place) rather than a paragraph here.
-            places.take(NOTABLE_SHOWN).forEachIndexed { index, place ->
-                if (index > 0) Spacer(Modifier.height(12.dp))
-                Text(place.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                val sub = place.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }
-                val dist = distanceLabel(place.distanceKm)?.let { "$it away" }
-                val meta = listOfNotNull(sub, dist).joinToString(" · ")
-                if (meta.isNotBlank()) {
-                    Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onDirections(place) }) { Text("Directions") }
-                    TextButton(onClick = { onSave(place) }) { Text("Save") }
+private fun NotableCard(
+    title: String,
+    icon: ImageVector,
+    places: List<Place>,
+    onDirections: (Place) -> Unit,
+    onSave: (Place) -> Unit,
+) {
+    WnCard {
+        SectionHeader(icon, title)
+        Spacer(Modifier.height(14.dp))
+        places.take(NOTABLE_SHOWN).forEachIndexed { index, place ->
+            if (index > 0) Spacer(Modifier.height(16.dp))
+            val sub = place.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }
+            val dist = distanceLabel(place.distanceKm)?.let { "$it away" }
+            val meta = listOfNotNull(sub, dist).joinToString(" · ")
+            PlaceRow(place, meta) {
+                DirectionsButton { onDirections(place) }
+                SaveButton { onSave(place) }
+            }
+        }
+    }
+}
+
+/**
+ * One place inside a card: a colourful category badge, the name + a glanceable meta line,
+ * and its actions. The badge is what turns a wall of text into something you can scan.
+ */
+@Composable
+private fun PlaceRow(place: Place, meta: String, actions: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        CategoryBadge(place.category, place.religion)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(place.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            if (meta.isNotBlank()) {
+                Spacer(Modifier.height(1.dp))
+                Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(8.dp))
+            ActionRow(content = actions)
+        }
+    }
+}
+
+/**
+ * The home hero: a warm teal banner welcoming the traveller to where they are — their
+ * actual suburb when we have a fresh on-device fix, otherwise the city — with the city's
+ * essentials (currency, population, a one-tap emergency dial) as neat pills. Replaces the
+ * old flat grey info box so the app opens with personality instead of a wall of facts.
+ */
+@Composable
+private fun HomeHeader(city: CityInfo, locality: String?, onCallEmergency: (String) -> Unit) {
+    val facts = CountryFacts.forCountry(city.country)
+    // The traveller's actual locality (on-device nearest suburb) as the heading when we
+    // have it and it differs from the pack city; otherwise the pack city. Null just means
+    // "no fix / offline" — we never invent a place name.
+    val here = locality?.takeIf { it.isNotBlank() && !it.equals(city.shortName, ignoreCase = true) }
+    val title = here ?: city.shortName
+    val subtitle = if (here != null) listOfNotNull(city.shortName, city.country).joinToString(", ") else city.country
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    ) {
+        Column(Modifier.padding(22.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.LocationOn, null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("WHERE YOU ARE", style = MaterialTheme.typography.labelMedium)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(title, style = MaterialTheme.typography.headlineMedium)
+            subtitle?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                )
+            }
+            if (facts != null || (here == null && city.population != null)) {
+                Spacer(Modifier.height(18.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Population is the pack CITY's figure, so only show it under the city
+                    // heading — under a suburb it would misread as the suburb's population.
+                    if (here == null) city.population?.let { HeaderPill(Icons.Filled.Groups, "%,d".format(it)) }
+                    facts?.let {
+                        HeaderPill(Icons.Filled.Payments, it.currency)
+                        HeaderPill(Icons.Filled.Call, "Emergency ${it.emergency}", emphasis = true) { onCallEmergency(it.emergency) }
+                    }
                 }
             }
         }
     }
 }
 
-/** Compact facts about the place you're in, shown on the empty screen. */
+/**
+ * A small pill inside the hero: an icon + a fact. Optionally tappable (the emergency
+ * dial), and `emphasis` gives that one a stronger, "call me" red so it stands out.
+ */
 @Composable
-private fun CityInfoCard(city: CityInfo, locality: String?, onCallEmergency: (String) -> Unit) {
-    val facts = CountryFacts.forCountry(city.country)
-    // Show the traveller's actual locality (reverse-geocoded suburb) as the heading
-    // when we have it and it differs from the pack city; otherwise the pack city. Null
-    // just means "no fix / offline" — we never invent a place name.
-    val here = locality?.takeIf { it.isNotBlank() && !it.equals(city.shortName, ignoreCase = true) }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(here ?: city.shortName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            // If we're showing a suburb, name the wider city underneath; else the country.
-            val subtitle = if (here != null) listOfNotNull(city.shortName, city.country).joinToString(", ") else city.country
-            subtitle?.let {
-                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
-            Spacer(Modifier.height(10.dp))
-            // Population is the pack CITY's figure, so only show it under the city
-            // heading — under a suburb it would misread as the suburb's population.
-            if (here == null) city.population?.let { CityFactRow("Population", "%,d".format(it)) }
-            facts?.let {
-                CityFactRow("Currency", it.currency)
-                CityFactRow("Emergency", it.emergency)
-                Spacer(Modifier.height(8.dp))
-                // Opens the dialer pre-filled — the user still taps call themselves.
-                TextButton(onClick = { onCallEmergency(it.emergency) }, contentPadding = PaddingValues(0.dp)) {
-                    Text("Call emergency (${it.emergency})")
-                }
-            }
-        }
+private fun HeaderPill(icon: ImageVector, text: String, emphasis: Boolean = false, onClick: (() -> Unit)? = null) {
+    // In dark mode a plain `surface` pill barely separates from the teal hero, so use a
+    // lighter container there for definition.
+    val container = when {
+        emphasis -> MaterialTheme.colorScheme.error
+        isSystemInDarkTheme() -> MaterialTheme.colorScheme.surfaceContainerHighest
+        else -> MaterialTheme.colorScheme.surface
+    }
+    val content = if (emphasis) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onSurface
+    val base = Modifier.clip(RoundedCornerShape(50)).background(container)
+    val shaped = if (onClick != null) base.clickable { onClick() } else base
+    Row(
+        // 44dp min so the tappable "Emergency" dial is a comfortable, safe target.
+        modifier = shaped.heightIn(min = 44.dp).padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = content, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(text, style = MaterialTheme.typography.labelMedium, color = content)
     }
 }
 
@@ -850,50 +958,26 @@ private fun CityInfoCard(city: CityInfo, locality: String?, onCallEmergency: (St
 @Composable
 private fun NearbyCard(
     title: String,
+    icon: ImageVector,
     places: List<Place>,
     onDirections: (Place) -> Unit,
     onCall: (String) -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            places.forEachIndexed { index, place ->
-                if (index > 0) Spacer(Modifier.height(12.dp))
-                Text(place.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                // Kind and distance share one line — same shape as the "Worth visiting"
-                // rows, and it saves a line per entry over spelling them out separately.
-                val meta = listOfNotNull(
-                    categoryLabel(place.category),
-                    distanceLabel(place.distanceKm)?.let { "$it away" },
-                ).joinToString(" · ")
-                Text(
-                    meta,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onDirections(place) }) { Text("Directions") }
-                    place.phone?.let { phone ->
-                        TextButton(onClick = { onCall(phone) }) { Text("Call") }
-                    }
-                }
+    WnCard {
+        SectionHeader(icon, title)
+        Spacer(Modifier.height(14.dp))
+        places.forEachIndexed { index, place ->
+            if (index > 0) Spacer(Modifier.height(16.dp))
+            // Kind and distance share one line — same shape as the "Worth visiting" rows.
+            val meta = listOfNotNull(
+                categoryLabel(place.category),
+                distanceLabel(place.distanceKm)?.let { "$it away" },
+            ).joinToString(" · ")
+            PlaceRow(place, meta) {
+                DirectionsButton { onDirections(place) }
+                place.phone?.let { phone -> CallButton { onCall(phone) } }
             }
         }
-    }
-}
-
-/** One "Label   value" line inside the City Info card. */
-@Composable
-private fun CityFactRow(label: String, value: String) {
-    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(104.dp),
-        )
-        Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -905,25 +989,30 @@ private fun MessageItem(message: ChatMessage, onDirections: (Place) -> Unit, onS
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
     ) {
         Surface(
-            color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-            shape = RoundedCornerShape(16.dp),
+            color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+            contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            // A little "tail" corner so the bubbles point to their sender.
+            shape = if (isUser) RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp)
+            else RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp),
+            shadowElevation = if (isUser) 0.dp else 1.dp,
+            border = if (isUser) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             if (message.loading) {
-                androidx.compose.foundation.layout.Row(
-                    modifier = Modifier.padding(12.dp),
+                Row(
+                    // Announce "Thinking…"/"Warming up…" to a screen reader without stealing focus.
+                    modifier = Modifier.padding(14.dp).semantics { liveRegion = LiveRegionMode.Polite },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(message.text)
+                    Spacer(Modifier.width(10.dp))
+                    Text(message.text, style = MaterialTheme.typography.bodyMedium)
                 }
             } else {
-                Text(message.text, modifier = Modifier.padding(12.dp))
+                Text(message.text, modifier = Modifier.padding(14.dp), style = MaterialTheme.typography.bodyLarge)
             }
         }
         message.cards.forEach { card ->
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             RecommendationCard(card, onDirections, onSave)
         }
     }
@@ -932,36 +1021,41 @@ private fun MessageItem(message: ChatMessage, onDirections: (Place) -> Unit, onS
 @Composable
 private fun RecommendationCard(card: RecCard, onDirections: (Place) -> Unit, onSave: (Place) -> Unit) {
     val place = card.place
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(place.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            place.subcategory?.let {
-                Text(
-                    it.replace('_', ' ').replaceFirstChar { c -> c.uppercase() },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+    val tint = categoryTint(place.category, isSystemInDarkTheme())
+    WnCard {
+        Row(verticalAlignment = Alignment.Top) {
+            CategoryBadge(place.category, place.religion, size = 46.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(place.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                place.subcategory?.let {
+                    Text(
+                        it.replace('_', ' ').replaceFirstChar { c -> c.uppercase() },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tint.icon,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
             }
-            if (card.reason.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(card.reason, style = MaterialTheme.typography.bodyMedium)
-            }
-            place.summary?.let {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        }
+        if (card.reason.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Text(card.reason, style = MaterialTheme.typography.bodyMedium)
+        }
+        place.summary?.let {
             Spacer(Modifier.height(8.dp))
-            androidx.compose.foundation.layout.Row {
-                TextButton(onClick = { onDirections(place) }) { Text("Directions") }
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = { onSave(place) }) { Text("Save") }
-            }
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        ActionRow {
+            DirectionsButton { onDirections(place) }
+            SaveButton { onSave(place) }
         }
     }
 }
@@ -980,23 +1074,54 @@ private fun InputBar(
         VoiceState.Listening -> "Listening…"
         VoiceState.Idle -> "Ask for a place…"
     }
-    Surface(tonalElevation = 3.dp) {
-        androidx.compose.foundation.layout.Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+    val canSend = value.isNotBlank()
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 10.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MicButton(voiceState = voiceState, onClick = onMicToggle)
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text(placeholder) },
-                maxLines = 3,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = onSend, enabled = value.isNotBlank()) { Text("Send") }
+            // A soft pill holds the mic + the text field, so the input reads as one thing.
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MicButton(voiceState = voiceState, onClick = onMicToggle)
+                TextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text(placeholder) },
+                    maxLines = 3,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    // Transparent so the pill behind shows through — no double box.
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                    ),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            // Circular send button — lights up in the brand colour once there's something to send.
+            Surface(
+                onClick = onSend,
+                enabled = canSend,
+                shape = CircleShape,
+                color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = if (canSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(52.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.AutoMirrored.Filled.Send, "Send", modifier = Modifier.size(22.dp))
+                }
+            }
         }
     }
 }

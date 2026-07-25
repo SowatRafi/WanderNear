@@ -1,0 +1,4 @@
+<resources>
+    <!-- Dark-mode pre-Compose window background, matched to the dark theme background. -->
+    <color name="window_background">#0F1512</color>
+</resources>
