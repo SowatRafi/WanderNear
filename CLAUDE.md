@@ -277,10 +277,14 @@ never guessed.
   Verified on a Pixel 6 (reader sheet + Listen wired, no crash; the alert firing is best seen by
   travelling near a summary-bearing place). **Follow-ups same day:** warmed the home **hero** (a
   time-aware greeting — "Good morning/afternoon/evening" + a pin on the place name — replacing the
-  clinical "WHERE YOU ARE"), and added **deleting a downloaded city** (a trash button per pack in
-  the Cities card; the bundled Melbourne can't be deleted; deleting the ACTIVE city falls back to
-  Melbourne first — closes the M6.4d "no way to delete a pack" gap; `CityPackBuilder.deleteInstalled`
-  only touches `packs/`).
+  clinical "WHERE YOU ARE"), and added **deleting ANY city** (a trash button per pack in the Cities
+  card — closes the M6.4d "no way to delete a pack" gap). Deleting the ACTIVE city switches to
+  another installed one first, and you can never delete the LAST city (so the app always has data).
+  **Even the built-in Melbourne is deletable** now: since it's bundled + auto-re-seeded, a hidden
+  MARKER file (`melbourne.db.hidden`) makes `seedBundled` bail out so it can't silently come back;
+  `CityDatabase.deleteBundled`/`restoreBundled` toggle it, and a "Restore built-in Melbourne" button
+  re-seeds it from the APK asset (no download). Downloaded packs use `CityPackBuilder.deleteInstalled`
+  (touches `packs/` only). Verified on a Pixel 6 (delete→restore cycle, UI + filesystem).
 - **PT — Prayer times + mosque awareness** (from the owner's "no guidebook" vision).
     - **PT.1** ✅ Done. The five daily prayer times, **calculated ON-DEVICE** (offline, free)
       — `core/prayer/PrayerTimes.kt`, a pure-Kotlin PrayTimes.org port, unit-tested against

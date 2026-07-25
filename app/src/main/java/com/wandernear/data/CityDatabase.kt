@@ -51,6 +51,9 @@ class CityDatabase(
      * concurrent open never sees a half-written pack.
      */
     private fun seedBundled(dbFile: File) {
+        // The user may have removed the built-in city (Cities → delete Melbourne). While it's
+        // hidden, never silently re-copy it back from assets — only [restoreBundled] brings it back.
+        if (isBundledHidden(context)) return
         val marker = File(context.filesDir, "$BUNDLED_PACK.version")
         fun installed(): Int? =
             if (marker.exists()) marker.runCatching { readText().trim().toInt() }.getOrNull() else null
@@ -375,6 +378,27 @@ class CityDatabase(
     companion object {
         /** The bundled pack shipped in assets — the default active city. */
         const val BUNDLED_PACK = "melbourne.db"
+
+        /** Marker file: present ⇒ the user deleted the built-in Melbourne pack, so it must
+         *  not be re-seeded from assets or listed until they restore it. */
+        private fun hiddenMarker(context: Context) = File(context.filesDir, "$BUNDLED_PACK.hidden")
+
+        /** True if the user has removed the built-in Melbourne pack. */
+        fun isBundledHidden(context: Context): Boolean = hiddenMarker(context).exists()
+
+        /** Remove the built-in Melbourne pack: mark it hidden (so a concurrent open can't
+         *  re-seed it), then delete its file + SQLite sidecars + version marker. Reversible. */
+        fun deleteBundled(context: Context) {
+            hiddenMarker(context).writeText("1")   // set FIRST so seedBundled bails out
+            for (s in listOf("", "-journal", "-wal", "-shm", ".version", ".tmp")) {
+                File(context.filesDir, BUNDLED_PACK + s).delete()
+            }
+        }
+
+        /** Bring the built-in Melbourne back — re-seeded from assets the next time it's opened. */
+        fun restoreBundled(context: Context) {
+            hiddenMarker(context).delete()
+        }
 
         /**
          * Bump whenever the bundled pack in assets is rebuilt (new data OR a new column),
