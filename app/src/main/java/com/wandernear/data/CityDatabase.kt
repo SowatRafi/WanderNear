@@ -31,16 +31,24 @@ class CityDatabase(
 ) {
 
     private fun open(): SQLiteDatabase {
-        // If the active pack's file is gone (deleted/cleared), fall back to the built-in
-        // Melbourne IF it's present, rather than crashing on a missing file. We never
-        // reach here with no city at all — every caller checks [hasAnyCity] first.
-        val bundled = File(context.filesDir, BUNDLED_PACK)
-        val name =
-            if (packName != BUNDLED_PACK && !File(context.filesDir, packName).exists() && bundled.exists()) BUNDLED_PACK
-            else packName
-        val dbFile = File(context.filesDir, name)
+        // Resolve to a pack file that actually EXISTS: the requested one; else the built-in
+        // Melbourne if it's installed; else any downloaded pack. The requested name can be
+        // stale — a just-deleted pack, or the default "melbourne.db" before the active pack has
+        // loaded — and since online-first means Melbourne may NOT be installed, opening it
+        // blindly would crash (SQLITE_CANTOPEN). Callers gate on [hasAnyCity], so at least one
+        // pack exists here; this just picks a real one instead of trusting a stale name.
+        val requested = File(context.filesDir, packName)
+        val dbFile = when {
+            requested.exists() -> requested
+            File(context.filesDir, BUNDLED_PACK).exists() -> File(context.filesDir, BUNDLED_PACK)
+            else -> firstDownloadedPack() ?: requested   // requested → a clear error if truly nothing
+        }
         return SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
     }
+
+    /** Any downloaded pack (stable pick by name), for [open]'s last-resort fallback. */
+    private fun firstDownloadedPack(): File? =
+        File(context.filesDir, "packs").listFiles { f -> f.name.endsWith(".db") }?.minByOrNull { it.name }
 
     /**
      * Finds the best matching places for a search, ranked by distance from

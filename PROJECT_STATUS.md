@@ -21,15 +21,19 @@ recommendation grounded in a real retrieved row — live OSM or a downloaded pac
 > from offline-first to **online-first**: the app fetches data LIVE from free OSM
 > as you ask, and **downloading a city is optional** (for offline use). Grounding
 > and "GPS never leaves the phone" are unchanged — data is fetched by AREA NAME and
-> ranked near-you on-device; the on-device AI only rewords the live rows. **L1 + L2
-> done and verified.** L1 = live chat (Werribee "parks" → real grounded results).
-> **L2 = the whole HOME goes live** (one OSM fetch feeds hero + daily-needs +
-> worth-visiting + for-you + worship; hero/currency/emergency from the area itself;
-> prayer times on-device) — verified on Werribee (pop 50,027, live police/hospital/
-> fuel/parking + gallery/ruins). Bundled Melbourne is no longer the auto-default — a
-> fresh install shows an "add a city" welcome; Melbourne is an optional offline
-> sample. See CLAUDE.md → "ARCHITECTURE PIVOT". Remaining: L3 (offline-fallback +
-> finalize optional-download UX).
+> ranked near-you on-device; the on-device AI only rewords the live rows. **L1–L3 done
+> and verified — the live-first pivot is COMPLETE.** L1 = live chat; L2 = the whole HOME
+> goes live (one OSM fetch feeds hero + daily-needs + worth-visiting + for-you + worship);
+> **L3 = offline fallback**: online → live, offline WITH a downloaded pack for the area →
+> that pack (never a different city), offline WITHOUT one → a clean "You're offline —
+> reconnect or download [area]" state. "Download" now makes a city work live AND offline.
+> Two on-device bugs found + fixed in L3: `isOnline` was fooled by a "connected" VPN with a
+> dead tunnel (now checks for a non-VPN validated network), and `open()` crashed when the
+> default pack name pointed at an uninstalled Melbourne (now resolves to a pack that
+> exists). Bundled Melbourne is no longer the auto-default — a fresh install shows an "add a
+> city" welcome; Melbourne is an optional offline sample. See CLAUDE.md → "ARCHITECTURE
+> PIVOT". Verified on a Pixel 6 across every state (online/offline/VPN). Next: enrich
+> downloaded cities with Wikipedia "stories" (owner's Phase 2), and M6.4e background refresh.
 
 ## Status: M1–M6.6 + Travel Mode (TM.1–TM.3) + PT.1 + all-faiths worship + personalised home + **full UI redesign** ✅ — all verified on device and pushed
 

@@ -68,6 +68,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wandernear.core.model.ActiveArea
 import com.wandernear.core.model.CityEvent
 import com.wandernear.core.model.CityInfo
 import com.wandernear.core.model.Faith
@@ -83,8 +84,10 @@ import com.wandernear.travel.TravelModeService
 import com.wandernear.core.response.GroundingCheck
 import com.wandernear.core.response.Recommender
 import com.wandernear.core.retrieval.QueryParser
+import com.wandernear.core.retrieval.SearchSpec
 import com.wandernear.ui.theme.categoryTint
 import com.wandernear.data.CityDatabase
+import com.wandernear.data.CityPackBuilder
 import com.wandernear.data.LiveSource
 import com.wandernear.data.LocationProvider
 import com.wandernear.data.PreferencesRepository
@@ -255,6 +258,44 @@ private data class ChatMessage(
     val loading: Boolean = false,
 )
 
+/**
+ * The downloaded pack to read when we're NOT live: the one matching the area you're exploring
+ * (by osm id), or — when no area is set — the active pack (bundled Melbourne, or a pack chosen
+ * in Cities). Null ⇒ nothing downloaded for this view (you're offline and haven't saved this
+ * area), so the caller shows an offline state instead of a different city's data.
+ */
+private suspend fun resolveOfflinePack(context: Context, area: ActiveArea?, activePack: String): String? =
+    withContext(Dispatchers.IO) {
+        if (area != null) CityPackBuilder.packForOsmId(context, area.osmId)
+        else if (CityDatabase.hasAnyCity(context)) activePack else null
+    }
+
+/** Turn retrieved [places] into a chat reply: the AI reword when enabled AND grounded, else the
+ *  template. Empty in → the honest refusal, and the AI is never called. Shared by the live and
+ *  the offline-pack paths so both answer identically. */
+private suspend fun buildRecommendation(
+    context: Context, question: String, places: List<Place>, spec: SearchSpec,
+    nearYou: Boolean, cityName: String?, aiEnabled: Boolean,
+): ChatMessage {
+    if (places.isEmpty()) return ChatMessage(Role.Assistant, Recommender.NO_RESULTS)
+    val cards = places.map { RecCard(it, Recommender.reason(it, spec)) }
+    val intro = if (aiEnabled) {
+        val ready = LlmEngine.ensureReady(context)
+        val aiText = if (ready) {
+            LlmEngine.generate(Recommender.AI_SYSTEM, Recommender.aiPrompt(question, places, nearYou))
+        } else {
+            null
+        }
+        // Use the AI reply only if it's non-empty AND names only retrieved places; else the
+        // template. This is the enforced never-hallucinate guardrail.
+        aiText?.takeIf { it.isNotBlank() && GroundingCheck.isGrounded(it, places, cityName) }
+            ?: Recommender.reply(spec, places, nearYou = nearYou)
+    } else {
+        Recommender.reply(spec, places, nearYou = nearYou)
+    }
+    return ChatMessage(Role.Assistant, intro, cards)
+}
+
 /** The main tab: ask for a place, get real recommendations built from the data.
  *  [onAddCity] jumps to Preferences → Cities (used by the "no city yet" welcome). */
 @Composable
@@ -266,7 +307,6 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     // The live/online area the user is exploring (set by name), or null. When online AND
     // set, searches fetch live from OSM; otherwise we fall back to a downloaded pack.
     val activeArea by prefsRepo.activeArea.collectAsState(initial = null)
-    val db = remember(activePack) { CityDatabase(context, activePack) }
     val journalDao = remember { JournalDatabase.get(context).journalDao() }
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var input by remember { mutableStateOf("") }
@@ -280,29 +320,34 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     // Is there a usable city at all? False on a fresh install and after you delete your last
     // city — the screen then shows an "add a city" welcome instead of querying (no pack to open).
     var hasCity by remember(activePack, cityEpoch) { mutableStateOf(CityDatabase.hasAnyCity(context)) }
+    // True when you're OFFLINE, exploring an area you haven't downloaded — the home then shows
+    // an "offline, connect or download" state for THAT area, not a different downloaded city.
+    // Written ONLY by the load effect below (no remember key), so a re-emit of activeArea can't
+    // reset it out from under the value the effect just set.
+    var offlineArea by remember { mutableStateOf(false) }
     // The active city's facts (name, country, population) for the City Info card.
-    var cityInfo by remember(activePack) { mutableStateOf<CityInfo?>(null) }
+    var cityInfo by remember(activePack, activeArea) { mutableStateOf<CityInfo?>(null) }
     // Nearest essentials (police/hospital/fuel/parking) for the daily-needs card.
-    var essentials by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    var essentials by remember(activePack, activeArea) { mutableStateOf<List<Place>>(emptyList()) }
     // The active city's centre — the "near me" fallback when we have no GPS fix.
-    var cityCenter by remember(activePack) { mutableStateOf<LatLng?>(null) }
+    var cityCenter by remember(activePack, activeArea) { mutableStateOf<LatLng?>(null) }
     // The traveller's actual locality (on-device nearest suburb) for the header,
     // and grounded "worth visiting near you" suggestions — both loaded below.
-    var locality by remember(activePack) { mutableStateOf<String?>(null) }
-    var notable by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    var locality by remember(activePack, activeArea) { mutableStateOf<String?>(null) }
+    var notable by remember(activePack, activeArea) { mutableStateOf<List<Place>>(emptyList()) }
     // The ONE broad live fetch the home derives from (daily needs, worth-visiting, for-you,
     // worship) when online with an area set. Null = not live → the pack path fills the cards.
     var liveHome by remember(activePack, activeArea, cityEpoch) { mutableStateOf<List<Place>?>(null) }
     // "For you": nearby places matching the interests you picked in Preferences. Empty
     // (and the card hidden) when you've selected no interests.
-    var forYou by remember(activePack) { mutableStateOf<List<Place>>(emptyList()) }
+    var forYou by remember(activePack, activeArea) { mutableStateOf<List<Place>>(emptyList()) }
     // The nearest place of worship for the user's faith (all faiths), plus — for Islam
     // only — today's calculated prayer times. Shown only when a faith is picked.
-    var prayerTimes by remember(activePack) { mutableStateOf<PrayerTimes.Times?>(null) }
-    var worship by remember(activePack) { mutableStateOf<Place?>(null) }
+    var prayerTimes by remember(activePack, activeArea) { mutableStateOf<PrayerTimes.Times?>(null) }
+    var worship by remember(activePack, activeArea) { mutableStateOf<Place?>(null) }
     // The city's annual festivals (no dates — see FestivalsCard). Pack-wide, not
     // location-based, so it doesn't depend on having a fix.
-    var festivals by remember(activePack) { mutableStateOf<List<CityEvent>>(emptyList()) }
+    var festivals by remember(activePack, activeArea) { mutableStateOf<List<CityEvent>>(emptyList()) }
     // "Around you now" comes from the Travel Mode service's own fixes — the screen never
     // asks for location itself, so Travel Mode stays the one place that watches you.
     // Empty (and the card hidden) whenever Travel Mode is off. Digests carry the pack
@@ -430,37 +475,35 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
 
         scope.launch {
             val answer = withContext(Dispatchers.IO) {
-                // Live ranks around the area's centre; the pack around its centroid. The
-                // real fix (if any, and actually near here) wins — and stays on-device.
-                val center = if (useLive) area.center else cityCenter
-                val here = fixInCity(LocationProvider.lastKnown(context), center)
-                val origin = here ?: center ?: MELBOURNE_CBD
                 val spec = QueryParser.parse(question, prefs)
-                val places = if (useLive) LiveSource.search(area, spec, origin) else db.search(spec, origin)
-                val cityName = if (useLive) area.shortName else cityInfo?.name
-
-                if (places.isEmpty()) {
-                    // Nothing retrieved → honest refusal; the AI is never called.
-                    ChatMessage(Role.Assistant, Recommender.NO_RESULTS)
-                } else {
-                    val cards = places.map { RecCard(it, Recommender.reason(it, spec)) }
-                    val intro = if (aiEnabled) {
-                        val ready = LlmEngine.ensureReady(context)
-                        val aiText = if (ready) {
-                            LlmEngine.generate(Recommender.AI_SYSTEM, Recommender.aiPrompt(question, places, here != null))
-                        } else {
-                            null
-                        }
-                        // Use the AI reply only if it isn't empty AND names only
-                        // places we actually retrieved; otherwise fall back to the
-                        // template. This is the enforced never-hallucinate guardrail.
-                        aiText?.takeIf { it.isNotBlank() && GroundingCheck.isGrounded(it, places, cityName) }
-                            ?: Recommender.reply(spec, places, nearYou = here != null)
-                    } else {
-                        Recommender.reply(spec, places, nearYou = here != null)
+                // Try LIVE first when we think we're online. A null result = the fetch actually
+                // failed (dead VPN, dropped WiFi) → fall through to the offline pack.
+                if (useLive) {
+                    val center = area.center
+                    val here = fixInCity(LocationProvider.lastKnown(context), center)
+                    val places = LiveSource.search(area, spec, here ?: center)
+                    if (places != null) {
+                        return@withContext buildRecommendation(
+                            context, question, places, spec, here != null, area.shortName, aiEnabled,
+                        )
                     }
-                    ChatMessage(Role.Assistant, intro, cards)
+                    // else: live failed → fall through to the offline pack below.
                 }
+                // Offline (or a failed-live fallback): read the pack backing this area (or the
+                // active pack) — never a different downloaded city.
+                val pack = resolveOfflinePack(context, area, activePack)
+                    ?: return@withContext ChatMessage(
+                        Role.Assistant,
+                        if (area != null)
+                            "You're offline — reconnect to explore ${area.shortName} live, or download it for offline in Preferences → Cities."
+                        else
+                            Recommender.NO_RESULTS,
+                    )
+                val pdb = CityDatabase(context, pack)
+                val center = pdb.cityCenter()
+                val here = fixInCity(LocationProvider.lastKnown(context), center)
+                val places = pdb.search(spec, here ?: center ?: MELBOURNE_CBD)
+                buildRecommendation(context, question, places, spec, here != null, pdb.cityInfo()?.name, aiEnabled)
             }
             if (placeholderIndex != null) messages[placeholderIndex] = answer else messages += answer
         }
@@ -528,47 +571,58 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val area = activeArea
         val live = area != null && withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
         if (live) {
-            hasCity = true
-            val center = area.center
-            cityCenter = center
-            // The hero + City Info come straight from the area — no fetch needed.
-            cityInfo = CityInfo(area.displayName, area.country, area.population)
-            festivals = emptyList()   // festivals need a Wikipedia call — deferred for live
-            locality = null           // suburb needs a downloaded pack; the hero shows the area name
             val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
-            val origin = fixInCity(fix, center) ?: center
-            // ONE live fetch feeds every card below (daily needs, worth-visiting, for-you, worship).
+            val origin = fixInCity(fix, area.center) ?: area.center
+            // ONE live fetch feeds every card (daily needs, worth-visiting, for-you, worship).
+            // null ⇒ the fetch FAILED despite isOnline (e.g. a "connected" VPN with a dead
+            // tunnel) → fall through to the offline path rather than showing an empty home.
             val home = withContext(Dispatchers.IO) { LiveSource.places(area, homeCategories(prefs), origin) }
-            liveHome = home
-            // `home` is already ranked nearest-first, so firstOrNull of a category = nearest.
-            essentials = ESSENTIAL_CATEGORIES.mapNotNull { c -> home.firstOrNull { it.category == c } }
-            notable = home.filter { it.category == "attraction" }.take(NOTABLE_SHOWN)
-            return@LaunchedEffect
+            if (home != null) {
+                hasCity = true
+                offlineArea = false
+                cityCenter = area.center
+                // The hero + City Info come straight from the area — no fetch needed.
+                cityInfo = CityInfo(area.displayName, area.country, area.population)
+                festivals = emptyList()   // festivals need a Wikipedia call — deferred for live
+                locality = null           // suburb needs a pack; the hero shows the area name
+                liveHome = home
+                // `home` is already ranked nearest-first, so firstOrNull of a category = nearest.
+                essentials = ESSENTIAL_CATEGORIES.mapNotNull { c -> home.firstOrNull { it.category == c } }
+                notable = home.filter { it.category == "attraction" }.take(NOTABLE_SHOWN)
+                return@LaunchedEffect
+            }
+            // else: live fetch failed → fall through to the offline path below.
         }
-        // --- Offline, or no live area set: the downloaded-pack path (unchanged) ---
+        // --- Not live (offline, live fetch failed, or no area set): read a DOWNLOADED pack ---
         liveHome = null
-        val ok = withContext(Dispatchers.IO) { CityDatabase.hasAnyCity(context) }
-        hasCity = ok
-        if (!ok) {
-            // No pack and not live — the welcome state takes over.
+        // The pack backing THIS area (by osm id), or the active pack when no area is set.
+        val offlinePack = resolveOfflinePack(context, area, activePack)
+        if (offlinePack == null) {
+            // Nothing downloaded for this view. With an area set it's an OFFLINE state for that
+            // area (connect or download it) — never a different city; else the "add a city" welcome.
+            hasCity = false
+            offlineArea = (area != null)
             cityCenter = null; cityInfo = null; festivals = emptyList()
             essentials = emptyList(); notable = emptyList(); locality = null
             return@LaunchedEffect
         }
-        val center = withContext(Dispatchers.IO) { db.cityCenter() }
+        hasCity = true
+        offlineArea = false
+        val pdb = CityDatabase(context, offlinePack)
+        val center = withContext(Dispatchers.IO) { pdb.cityCenter() }
         cityCenter = center
-        cityInfo = withContext(Dispatchers.IO) { db.cityInfo() }
-        festivals = withContext(Dispatchers.IO) { db.festivals() }
+        cityInfo = withContext(Dispatchers.IO) { pdb.cityInfo() }
+        festivals = withContext(Dispatchers.IO) { pdb.festivals() }
         // Read location off the main thread (binder IPC). A stale fix is fine for
         // ranking; the "you are here" label below uses a FRESH fix only.
         val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
         val origin = fixInCity(fix, center) ?: center ?: MELBOURNE_CBD
-        essentials = withContext(Dispatchers.IO) { db.nearestEssentials(origin, ESSENTIAL_CATEGORIES) }
-        notable = withContext(Dispatchers.IO) { db.nearbyNotable(origin, NEARBY_RADIUS_KM) }
+        essentials = withContext(Dispatchers.IO) { pdb.nearestEssentials(origin, ESSENTIAL_CATEGORIES) }
+        notable = withContext(Dispatchers.IO) { pdb.nearbyNotable(origin, NEARBY_RADIUS_KM) }
         // Which suburb am I in? Derived ON-DEVICE from the pack (no GPS ever leaves the
         // phone), from a FRESH fix within the pack's area — else null (show the city).
         val freshFix = withContext(Dispatchers.IO) { LocationProvider.recentLastKnown(context, LOCALITY_FIX_MAX_AGE_MS) }
-        locality = freshFix?.let { withContext(Dispatchers.IO) { db.nearestSuburb(it, LOCALITY_MAX_KM) } }
+        locality = freshFix?.let { withContext(Dispatchers.IO) { pdb.nearestSuburb(it, LOCALITY_MAX_KM) } }
     }
 
     // Nearest place of worship for the chosen faith, plus Islam's calculated prayer
@@ -581,21 +635,23 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val faith = Faith.fromKey(prefs.faith)
         if (faith == null) { prayerTimes = null; worship = null; return@LaunchedEffect }
         val area = activeArea
-        val live = area != null && withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
-        if (live) {
-            // Worship comes from the ONE home fetch (worship is included when a faith is set);
-            // prayer times are computed ON-DEVICE from the area centre + phone timezone.
+        // Live succeeded ⇒ liveHome is set; derive worship from it (it includes worship when a
+        // faith is set). Prayer times are computed ON-DEVICE from the area centre + phone tz.
+        val home = liveHome
+        if (home != null && area != null) {
             val here = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, area.center) ?: area.center
-            worship = (liveHome ?: emptyList()).firstOrNull { it.category == "worship" && it.religion == faith.key }
+            worship = home.firstOrNull { it.category == "worship" && it.religion == faith.key }
             prayerTimes = if (faith == Faith.MUSLIM) computePrayerTimes(here, prefs) else null
             return@LaunchedEffect
         }
-        // Pack path.
-        if (!CityDatabase.hasAnyCity(context)) { prayerTimes = null; worship = null; return@LaunchedEffect }
-        val center = withContext(Dispatchers.IO) { db.cityCenter() }
+        // Pack path — the pack backing this area, or the active pack.
+        val offlinePack = resolveOfflinePack(context, area, activePack)
+        if (offlinePack == null) { prayerTimes = null; worship = null; return@LaunchedEffect }
+        val pdb = CityDatabase(context, offlinePack)
+        val center = withContext(Dispatchers.IO) { pdb.cityCenter() }
         val here = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center) ?: center
         if (here == null) { prayerTimes = null; worship = null; return@LaunchedEffect }  // empty pack
-        worship = withContext(Dispatchers.IO) { db.nearestWorship(here, faith.key).firstOrNull() }
+        worship = withContext(Dispatchers.IO) { pdb.nearestWorship(here, faith.key).firstOrNull() }
         // Calculated daily times exist only for Islam; other faiths show the place only.
         prayerTimes = if (faith == Faith.MUSLIM) computePrayerTimes(here, prefs) else null
     }
@@ -605,21 +661,24 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     LaunchedEffect(activePack, cityEpoch, activeArea, prefs.interests, prefs.diets, liveHome) {
         if (prefs.interests.isEmpty()) { forYou = emptyList(); return@LaunchedEffect }
         val area = activeArea
-        val live = area != null && withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
-        if (live) {
-            // Derive from the ONE home fetch — no extra network call. Diet filters food only.
-            forYou = (liveHome ?: emptyList())
+        // Live succeeded ⇒ derive from the ONE home fetch — no extra network call.
+        val home = liveHome
+        if (home != null) {
+            // Diet filters food only.
+            forYou = home
                 .filter { it.category in prefs.interests }
                 .filter { it.category != "food" || prefs.diets.isEmpty() || prefs.diets.any { d -> d in it.diets } }
                 .take(5)
             return@LaunchedEffect
         }
-        // Pack path.
-        if (!CityDatabase.hasAnyCity(context)) { forYou = emptyList(); return@LaunchedEffect }
-        val center = withContext(Dispatchers.IO) { db.cityCenter() }
+        // Pack path — the pack backing this area, or the active pack.
+        val offlinePack = resolveOfflinePack(context, area, activePack)
+        if (offlinePack == null) { forYou = emptyList(); return@LaunchedEffect }
+        val pdb = CityDatabase(context, offlinePack)
+        val center = withContext(Dispatchers.IO) { pdb.cityCenter() }
         val origin = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center)
             ?: center ?: MELBOURNE_CBD
-        forYou = withContext(Dispatchers.IO) { db.forYou(origin, prefs.interests.toList(), prefs.diets) }
+        forYou = withContext(Dispatchers.IO) { pdb.forYou(origin, prefs.interests.toList(), prefs.diets) }
     }
 
     // Keep the newest message in view.
@@ -641,6 +700,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
             // If a live area is already set, it says "explore [area]" and points to the chat.
             NoCityState(
                 areaName = activeArea?.shortName,
+                offline = offlineArea,
                 onAddCity = onAddCity,
                 onTryMelbourne = ::tryMelbourne,
                 modifier = Modifier.weight(1f),
@@ -703,15 +763,16 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
 }
 
 /**
- * Shown when no downloaded city is loaded. Online-first: nothing is bundled, so a fresh
- * install lands here. If a live [areaName] is already set, it becomes a "ready to explore
- * [area]" prompt pointing at the chat box; otherwise it's the first-run welcome.
- * [onAddCity] opens Preferences → Cities to set/change an area; [onTryMelbourne] adds the
- * built-in sample offline.
+ * Shown when there's no home to show. Three cases: a fresh install (online-first, nothing
+ * bundled) → the first-run welcome; a live [areaName] set + online → "ready to explore
+ * [area]"; or [offline] with an area you haven't downloaded → a "you're offline, connect or
+ * download" state for THAT area (never a different city). [onAddCity] opens Preferences →
+ * Cities; [onTryMelbourne] adds the built-in sample offline.
  */
 @Composable
 private fun NoCityState(
     areaName: String?,
+    offline: Boolean,
     onAddCity: () -> Unit,
     onTryMelbourne: () -> Unit,
     modifier: Modifier,
@@ -731,35 +792,52 @@ private fun NoCityState(
         }
         Spacer(Modifier.height(22.dp))
         Text(
-            if (areaName != null) "Explore $areaName" else "Add a city to begin",
+            when {
+                offline -> "You're offline"
+                areaName != null -> "Explore $areaName"
+                else -> "Add a city to begin"
+            },
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(10.dp))
         Text(
-            if (areaName != null)
-                "Ask me anything in the box below — I'll find real places live and rank them near you. " +
-                    "No signal? Download $areaName for offline in Preferences → Cities."
-            else
-                "WanderNear is your on-device local guide. Add a city once while you're online — " +
-                    "then it works fully offline, anywhere.",
+            when {
+                offline && areaName != null ->
+                    "Reconnect to explore $areaName live, or download it for offline (Preferences → " +
+                        "Cities) so it works with no signal at all."
+                offline ->
+                    "Reconnect to the internet, or download a city for offline in Preferences → Cities."
+                areaName != null ->
+                    "Ask me anything in the box below — I'll find real places live and rank them near " +
+                        "you. No signal? Download $areaName for offline in Preferences → Cities."
+                else ->
+                    "WanderNear is your on-device local guide. Add a city once while you're online — " +
+                        "then it works fully offline, anywhere."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(28.dp))
-        // ONE primary action: go to Preferences → Cities to set (or change) your area.
+        // ONE primary action: go to Preferences → Cities to set/change/download a city.
         Button(
             onClick = onAddCity,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         ) {
             Icon(Icons.Filled.Add, null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
-            Text(if (areaName != null) "Change area" else "Add a city")
+            Text(
+                when {
+                    offline -> "Go to Cities"
+                    areaName != null -> "Change area"
+                    else -> "Add a city"
+                },
+            )
         }
-        // Subordinate: an instant offline sample, only worth offering before an area is set.
-        if (areaName == null) {
+        // Subordinate: an instant offline sample, only worth offering on the online first-run.
+        if (areaName == null && !offline) {
             Spacer(Modifier.height(6.dp))
             TextButton(onClick = onTryMelbourne) {
                 Text("Try the built-in Melbourne sample")

@@ -66,6 +66,7 @@ class PreferencesRepository(private val context: Context) {
     private fun encodeArea(a: ActiveArea): String = JSONObject().apply {
         put("displayName", a.displayName)
         put("south", a.south); put("west", a.west); put("north", a.north); put("east", a.east)
+        put("osmId", a.osmId)
         a.country?.let { put("country", it) }
         a.population?.let { put("population", it) }
     }.toString()
@@ -76,6 +77,7 @@ class PreferencesRepository(private val context: Context) {
             displayName = o.getString("displayName"),
             south = o.getDouble("south"), west = o.getDouble("west"),
             north = o.getDouble("north"), east = o.getDouble("east"),
+            osmId = o.optLong("osmId", 0),
             country = if (o.has("country")) o.getString("country") else null,
             population = if (o.has("population")) o.getLong("population") else null,
         )

@@ -121,9 +121,27 @@ never guessed.
       "Good morning / Werribee / Australia / pop 50,027 / AUD / Emergency 000",
       live Daily needs (Werribee Police 1.7 km w/ Call, Mercy Hospital, UGO fuel
       440 m, Station Parking 260 m), live For-you (Wyndham Art Gallery, Werribee
-      Manor Ruins…) + Worth-visiting — all real OSM, ranked on-device. Remaining:
-      **L3** offline-fallback polish (prefer a downloaded pack matching the area;
-      an "offline — connect/download" state) + finalize the optional-download UX.
+      Manor Ruins…) + Worth-visiting — all real OSM, ranked on-device.
+    - **L3** ✅ Done: the offline fallback + optional-download UX. `ActiveArea` gained
+      `osmId`; `CityPackBuilder.packForOsmId` finds the downloaded pack backing an area
+      by the OSM id its filename encodes (`slug_<osmId>.db`). Home + chat resolve the
+      offline source via `resolveOfflinePack(area, activePack)`: online → live; offline
+      with a matching downloaded pack → that pack (never a different city); offline with
+      no matching pack → a clean **"You're offline — reconnect or download [area]"**
+      state (`offlineArea`). **Download** now sets BOTH the area and its pack, so a
+      downloaded city is live online AND offline. `LiveSource.search/places` return
+      `null` on a FAILED fetch (vs empty = no matches), so the home/chat fall back to
+      the pack even when connectivity lies (e.g. a "connected" VPN with a dead tunnel).
+      Two real bugs found on-device and fixed: (1) **`isOnline` fooled by a VPN** — a VPN
+      keeps reporting VALIDATED after its tunnel dies, hanging every live fetch for ~20 s;
+      fixed by trusting a VPN only when a NON-VPN network is also validated (detects the
+      dead tunnel instantly). (2) **`CityDatabase.open()` crashed** (SQLITE_CANTOPEN) when
+      the active-pack name was the default `melbourne.db` but Melbourne isn't installed
+      (online-first) — fixed to resolve to a pack that actually exists (requested → bundled
+      → any downloaded). Verified on a Pixel 6 across all states: online live, offline
+      with the Werribee pack (full home from the pack), offline without it ("You're
+      offline"), and the VPN/airplane case — no crash. **This completes the live-first
+      pivot (L1–L3).**
 - **M1 — Data pipeline** ✅ Done: Melbourne fetched from OSM + Wikipedia into
   SQLite (`pipeline/`) — 20,092 places + full-text search; proven with
   "halal restaurants", "temples", "vegetarian near me".

@@ -40,12 +40,34 @@ object LiveSource {
         "https://overpass.kumi.systems/api/interpreter",
     )
 
-    /** Is there an internet connection right now? Decides live vs. offline-pack fallback. */
+    /**
+     * A quick HINT of whether we're online — used only to decide whether to TRY live first.
+     * Requires NET_CAPABILITY_VALIDATED (Android confirmed real connectivity), not merely
+     * INTERNET, since a VPN or a dropped WiFi advertises INTERNET while unreachable. It can
+     * still be fooled (a VPN that keeps reporting VALIDATED after its tunnel dies), so callers
+     * do NOT trust it blindly: a live fetch that then fails ([places]/[search] return null)
+     * falls back to the offline pack. This is just the fast path that avoids a pointless
+     * network attempt when we're plainly offline (no active network at all).
+     */
     fun isOnline(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
-        val net = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(net) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val active = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(active) ?: return false
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+            !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return false
+        // A normal validated network → we're online.
+        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return true
+        // The active network is a VPN, which can keep reporting VALIDATED after its underlying
+        // transport dies (WiFi off in airplane mode, tunnel still "up"). Trust it only if some
+        // NON-VPN network is ALSO validated — i.e. the VPN actually has a live path out.
+        @Suppress("DEPRECATION")
+        return cm.allNetworks.any { n ->
+            cm.getNetworkCapabilities(n)?.let { c ->
+                !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            } ?: false
+        }
     }
 
     /**
@@ -58,11 +80,13 @@ object LiveSource {
      * match nothing yet a real filter exists (e.g. "vegetarian sushi" with no name hit),
      * fall back to the filtered set rather than coming up empty.
      */
-    suspend fun search(area: ActiveArea, spec: SearchSpec, origin: LatLng, limit: Int = 5): List<Place> =
+    suspend fun search(area: ActiveArea, spec: SearchSpec, origin: LatLng, limit: Int = 5): List<Place>? =
         withContext(Dispatchers.IO) {
             // Fetch only the asked-for category when we know it (fast); else everything.
             val categories = spec.category?.let { listOf(it) }
-            val all = fetchPlaces(area, categories, origin)
+            // null ⇒ the network actually failed (e.g. a "connected" VPN with a dead tunnel) —
+            // the caller falls back to the offline pack rather than showing "no results".
+            val all = fetchPlaces(area, categories, origin) ?: return@withContext null
 
             // Structured filters first (category/religion/diet), then the free-text words.
             val base = all.filter { passesFilters(it, spec) }
@@ -84,14 +108,23 @@ object LiveSource {
      * for the live HOME cards (daily needs, worth-visiting, for-you, worship all derive
      * from ONE such fetch, so the home costs a single Overpass call, not one per card).
      */
-    suspend fun places(area: ActiveArea, categories: Collection<String>, origin: LatLng): List<Place> =
+    suspend fun places(area: ActiveArea, categories: Collection<String>, origin: LatLng): List<Place>? =
         withContext(Dispatchers.IO) { fetchPlaces(area, categories, origin) }
 
-    /** Shared fetch + parse + distance-rank. [categories] null/empty ⇒ everything. */
-    private suspend fun fetchPlaces(area: ActiveArea, categories: Collection<String>?, origin: LatLng): List<Place> {
+    /**
+     * Shared fetch + parse + distance-rank. [categories] null/empty ⇒ everything. Returns null
+     * when the request FAILED (no connectivity / server error) — distinct from an empty list,
+     * which means the request succeeded but the area genuinely has none of those places. The
+     * caller uses null as the signal to fall back to the offline pack.
+     */
+    private suspend fun fetchPlaces(area: ActiveArea, categories: Collection<String>?, origin: LatLng): List<Place>? {
         val body = OsmClassifier.overpassBodyBbox(area.south, area.west, area.north, area.east, categories)
-        val json = overpassPost(body) ?: return emptyList()
-        val elements = runCatching { JSONObject(json).optJSONArray("elements") }.getOrNull() ?: return emptyList()
+        val json = overpassPost(body) ?: return null
+        // A valid Overpass response always carries an "elements" array (possibly empty). If it's
+        // absent or the body doesn't parse, the request FAILED (e.g. a 200 with a server-timeout
+        // remark) — treat that as failure (null) so the caller falls back to the offline pack,
+        // NOT as a genuine "no matches" (which an empty array correctly is).
+        val elements = runCatching { JSONObject(json).optJSONArray("elements") }.getOrNull() ?: return null
         // Parse every element to a grounded Place, keeping only the named/classifiable ones.
         val all = ArrayList<Place>(elements.length())
         for (i in 0 until elements.length()) {
@@ -167,7 +200,9 @@ object LiveSource {
             try {
                 conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 20_000
+                    // A tighter connect timeout so a dead network (e.g. a stale VPN tunnel) falls
+                    // back to the offline pack quickly instead of hanging the home for 20 s.
+                    connectTimeout = 10_000
                     readTimeout = 90_000
                     doOutput = true
                     setRequestProperty("User-Agent", USER_AGENT)

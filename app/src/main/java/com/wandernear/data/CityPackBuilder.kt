@@ -58,6 +58,18 @@ object CityPackBuilder {
     fun packsDir(context: Context): File = File(context.filesDir, "packs").apply { mkdirs() }
 
     /**
+     * The downloaded pack backing an area, matched by the OSM id its filename encodes
+     * (`<slug>_<osmId>.db`), or null if the area hasn't been downloaded for offline. Lets
+     * the OFFLINE home/chat use the RIGHT city's pack for the area you're exploring —
+     * never a different downloaded city. A plain filename check: no database is opened.
+     */
+    fun packForOsmId(context: Context, osmId: Long): String? {
+        val suffix = "_$osmId.db"
+        val file = packsDir(context).listFiles { f -> f.name.endsWith(suffix) }?.firstOrNull()
+        return file?.let { "packs/" + it.name }
+    }
+
+    /**
      * Delete a DOWNLOADED pack (and its SQLite journal/wal/shm sidecars). ONLY packs
      * under `packs/` can be removed — never the bundled city, which stays as the
      * guaranteed offline fallback. Resolving the file inside [packsDir] also stops a
@@ -153,11 +165,12 @@ object CityPackBuilder {
         /** Just the leading name, for headings — e.g. "Geelong". */
         val shortLabel: String get() = label.substringBefore(',').trim()
 
-        /** As an [ActiveArea] for the live/online mode — same bbox, name and facts, so
-         *  "use live" and "download" both describe exactly the area the user confirmed. */
+        /** As an [ActiveArea] for the live/online mode — same bbox, name, osm id and facts,
+         *  so "use live" and "download" describe exactly the area the user confirmed, and
+         *  offline we can find the pack that backs it by its osm id. */
         fun toActiveArea(): ActiveArea = ActiveArea(
             displayName = label, south = south, west = west, north = north, east = east,
-            country = country, population = population,
+            osmId = osmId, country = country, population = population,
         )
     }
 

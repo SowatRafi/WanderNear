@@ -18,6 +18,9 @@ data class ActiveArea(
     val west: Double,
     val north: Double,
     val east: Double,
+    // The OSM area id — the same id the downloaded pack's filename encodes, so we can tell
+    // OFFLINE whether a downloaded pack backs THIS area (see CityPackBuilder.packForOsmId).
+    val osmId: Long = 0,
     val country: String? = null,
     val population: Long? = null,
 ) {

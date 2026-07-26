@@ -143,14 +143,15 @@ fun CitiesSection(repo: PreferencesRepository) {
             try {
                 when (val result = CityPackBuilder.build(context, match) { progress = it }) {
                     is CityPackBuilder.Result.Success -> {
-                        // Switching here is what makes the home screen reload into the
-                        // new city, and refreshes the list above.
+                        // Set BOTH: the area (so you explore it live online) AND its pack (so the
+                        // SAME area works offline — the home/chat find this pack by its osm id).
+                        repo.setActiveArea(match.toActiveArea())
                         repo.setActivePack("packs/" + result.file.name)
                         matches = emptyList()
                         query = ""
                         // "%,d" groups thousands — 10,326 reads far better than 10326.
-                        message = "${match.shortLabel} is ready — %,d places. ".format(result.placeCount) +
-                            "It's now your active city."
+                        message = "${match.shortLabel} is ready — %,d places, ".format(result.placeCount) +
+                            "and now works offline too."
                         isError = false
                     }
                     is CityPackBuilder.Result.Failure -> {
