@@ -72,6 +72,28 @@ object QueryParser {
         "event" to "culture", "events" to "culture", "festival" to "culture", "festivals" to "culture",
         "stadium" to "culture", "arena" to "culture", "venue" to "culture", "venues" to "culture",
         "culture" to "culture", "cultural" to "culture", "entertainment" to "culture",
+        // Drinking places are `food` in OSM terms (amenity=bar/pub), so route them there
+        // rather than leaving them to a slow catch-all search.
+        "bar" to "food", "bars" to "food", "pub" to "food", "pubs" to "food",
+        "bakery" to "food", "takeaway" to "food", "snack" to "food", "eatery" to "food",
+        "drink" to "food", "drinks" to "food", "beer" to "food", "wine" to "food",
+        "dessert" to "food", "icecream" to "food",
+        // More of the `attraction` category by its OSM subtypes, so these don't fall
+        // through to the catch-all either.
+        "zoo" to "attraction", "zoos" to "attraction", "aquarium" to "attraction",
+        "artwork" to "attraction", "sculpture" to "attraction", "theme" to "attraction",
+        "amusement" to "attraction", "exhibition" to "attraction",
+        "lake" to "outdoor", "river" to "outdoor", "waterfall" to "outdoor",
+        "mountain" to "outdoor", "peak" to "outdoor", "cave" to "outdoor", "picnic" to "outdoor",
+        // These four categories had NO words at all, so "police"/"hospital"/"petrol"/
+        // "parking" fell through to a query for every category at once — the slowest
+        // possible search for the most urgent kinds of question.
+        "police" to "safety", "cops" to "safety", "safety" to "safety",
+        "hospital" to "health", "hospitals" to "health", "doctor" to "health",
+        "clinic" to "health", "medical" to "health",
+        "fuel" to "fuel", "petrol" to "fuel", "gas" to "fuel", "gasoline" to "fuel",
+        "diesel" to "fuel", "servo" to "fuel",
+        "parking" to "parking", "carpark" to "parking",
     )
 
     // Words that pin down a specific religion (so "mosque" → muslim). "temple" is

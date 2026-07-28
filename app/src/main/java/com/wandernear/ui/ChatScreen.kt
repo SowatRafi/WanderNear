@@ -304,6 +304,11 @@ private val ESSENTIAL_CATEGORIES = listOf("safety", "health", "fuel", "parking")
 private const val FESTIVALS_SHOWN = 3
 private const val NOTABLE_SHOWN = 3
 
+// How many places the home wants before it stops widening its search box. Enough to fill
+// the daily-needs, for-you and worth-visiting cards without a sparse-looking screen; a
+// city clears this in the smallest box, while a rural area keeps widening until it does.
+private const val MIN_HOME_PLACES = 25
+
 // The on-device suburb is only shown from a fresh fix within this range of the pack,
 // so a stale fix or a fix in another city can never mislabel where you are.
 private const val LOCALITY_MAX_KM = 25.0
@@ -781,8 +786,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
             // null ⇒ the fetch FAILED despite isOnline (e.g. a "connected" VPN with a dead
             // tunnel) → fall through to the offline path rather than showing an empty home.
             val home = cached
-                ?: withContext(Dispatchers.IO) { LiveSource.places(area, categories, origin) }
-                    ?.also { HomeCache.put(area, categories, it, System.currentTimeMillis()) }
+                ?: withContext(Dispatchers.IO) {
+                    LiveSource.places(area, categories, origin, minResults = MIN_HOME_PLACES)
+                }?.also { HomeCache.put(area, categories, it, System.currentTimeMillis()) }
             if (home != null) {
                 hasCity = true
                 offlineArea = false

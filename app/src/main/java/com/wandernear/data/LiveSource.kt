@@ -7,6 +7,7 @@ import com.wandernear.core.model.ActiveArea
 import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.haversineKm
+import com.wandernear.core.model.hereArea
 import com.wandernear.core.pack.OsmClassifier
 import com.wandernear.core.retrieval.SearchSpec
 import kotlinx.coroutines.CancellationException
@@ -49,6 +50,20 @@ object LiveSource {
     // 504 without leaving someone staring at a spinner when the service is really down.
     private const val OVERPASS_ATTEMPTS = 2
     private const val OVERPASS_RETRY_DELAY_MS = 1_500L
+
+    /**
+     * The box sizes tried around the user, smallest first — the app's answer to "works in
+     * any place".
+     *
+     * A single fixed radius cannot work everywhere: 3 km of central Tokyo is thousands of
+     * places and a slow, heavy query, while 3 km of outback Australia is nothing at all.
+     * Starting SMALL and widening only when there genuinely isn't enough solves both ends
+     * with one rule — in a city the first box already has plenty so we never widen (fast,
+     * light), and in the country we keep going until we reach the nearest town.
+     *
+     * 50 km is the last resort: beyond that "around you" stops being a fair description.
+     */
+    private val AROUND_YOU_RADII_KM = listOf(1.5, 5.0, 15.0, 50.0)
 
     /**
      * A quick HINT of whether we're online — used only to decide whether to TRY live first.
@@ -94,32 +109,68 @@ object LiveSource {
         withContext(Dispatchers.IO) {
             // Fetch only the asked-for category when we know it (fast); else everything.
             val categories = spec.category?.let { listOf(it) }
-            // null ⇒ the network actually failed (e.g. a "connected" VPN with a dead tunnel) —
-            // the caller falls back to the offline pack rather than showing "no results".
-            val all = fetchPlaces(area, categories, origin) ?: return@withContext null
-
-            // Structured filters first (category/religion/diet), then the free-text words.
-            val base = all.filter { passesFilters(it, spec) }
-            val result = when {
-                spec.ftsTerms.isEmpty() -> base
-                else -> {
-                    val hit = base.filter { matchesText(it, spec.ftsTerms) }
-                    // Fall back to the filtered set only when there WAS a real filter — a pure
-                    // free-text query with no match stays empty → an honest refusal.
-                    val hasFilter = spec.category != null || spec.religion != null || spec.diets.isNotEmpty()
-                    if (hit.isNotEmpty()) hit else if (hasFilter) base else emptyList()
-                }
+            // A named area (a city you chose to download) is searched exactly as asked —
+            // widening it would quietly answer about somewhere you didn't ask about.
+            if (!area.isAroundYou) {
+                val all = fetchPlaces(area, categories, origin) ?: return@withContext null
+                return@withContext matching(all, spec).take(limit)
             }
-            result.take(limit)   // fetchPlaces already ranked by distance
+            // Around YOU: sweep outwards until something matches, so "a café" answers in a
+            // city AND in a country town, without a big query in either.
+            var best: List<Place>? = null
+            for (radiusKm in AROUND_YOU_RADII_KM) {
+                val box = hereArea(area.center, area.country, radiusKm)
+                // null ⇒ the network actually failed (e.g. a "connected" VPN with a dead
+                // tunnel). Keep whatever a smaller box already found; if nothing had, the
+                // null tells the caller to fall back to the offline pack.
+                val all = fetchPlaces(box, categories, origin) ?: return@withContext best
+                best = matching(all, spec)
+                if (best.isNotEmpty()) break
+            }
+            best?.take(limit)
         }
+
+    /**
+     * Apply [spec] to fetched places: structured filters (category/religion/diet) first,
+     * then the free-text words. If those words match nothing but a real filter exists
+     * (e.g. "vegetarian sushi" with no name hit), fall back to the filtered set rather
+     * than coming up empty — but a pure free-text query with no match stays empty, so the
+     * app refuses honestly instead of showing something irrelevant.
+     */
+    private fun matching(all: List<Place>, spec: SearchSpec): List<Place> {
+        val base = all.filter { passesFilters(it, spec) }
+        if (spec.ftsTerms.isEmpty()) return base
+        val hit = base.filter { matchesText(it, spec.ftsTerms) }
+        if (hit.isNotEmpty()) return hit
+        val hasFilter = spec.category != null || spec.religion != null || spec.diets.isNotEmpty()
+        return if (hasFilter) base else emptyList()
+    }
 
     /**
      * Fetch every place in [categories] for the area, ranked nearest-first — the source
      * for the live HOME cards (daily needs, worth-visiting, for-you, worship all derive
      * from ONE such fetch, so the home costs a single Overpass call, not one per card).
      */
-    suspend fun places(area: ActiveArea, categories: Collection<String>, origin: LatLng): List<Place>? =
-        withContext(Dispatchers.IO) { fetchPlaces(area, categories, origin) }
+    suspend fun places(
+        area: ActiveArea,
+        categories: Collection<String>,
+        origin: LatLng,
+        minResults: Int = 0,
+    ): List<Place>? = withContext(Dispatchers.IO) {
+        // A named area is fetched exactly as given — its bbox IS the city you picked.
+        if (!area.isAroundYou) return@withContext fetchPlaces(area, categories, origin)
+        // Around YOU: widen until the home has enough to be worth showing. In a city the
+        // first (small) box already clears the bar, so this costs one quick query.
+        var best: List<Place>? = null
+        for (radiusKm in AROUND_YOU_RADII_KM) {
+            val box = hereArea(area.center, area.country, radiusKm)
+            // Network failure: keep whatever a smaller box found rather than losing it.
+            val got = fetchPlaces(box, categories, origin) ?: return@withContext best
+            best = got
+            if (got.size >= minResults) break
+        }
+        best
+    }
 
     /**
      * Fetch grounded Wikipedia "stories" for the wiki-linked places in [places] — in

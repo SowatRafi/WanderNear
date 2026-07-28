@@ -63,6 +63,30 @@ class QueryParserTest {
         assertTrue(spec.diets.isEmpty())
     }
 
+    @Test
+    fun urgentCategoriesAreRecognised() {
+        // These four had no vocabulary at all, so they fell through to a query for EVERY
+        // category — the slowest possible search for the most urgent questions.
+        assertEquals("safety", QueryParser.parse("police", UserPreferences()).category)
+        assertEquals("health", QueryParser.parse("hospital", UserPreferences()).category)
+        assertEquals("fuel", QueryParser.parse("petrol", UserPreferences()).category)
+        assertEquals("parking", QueryParser.parse("parking", UserPreferences()).category)
+    }
+
+    @Test
+    fun commonSubtypesRouteToTheirCategory() {
+        assertEquals("attraction", QueryParser.parse("zoo", UserPreferences()).category)
+        assertEquals("food", QueryParser.parse("pub", UserPreferences()).category)
+        assertEquals("outdoor", QueryParser.parse("waterfall", UserPreferences()).category)
+    }
+
+    @Test
+    fun parkStillMeansOutdoorNotParking() {
+        // "parking" and "park" are one letter apart and mean completely different things.
+        assertEquals("outdoor", QueryParser.parse("park", UserPreferences()).category)
+        assertEquals("parking", QueryParser.parse("parking", UserPreferences()).category)
+    }
+
     // --- "What's the history here?" has to actually route somewhere ---
 
     @Test
