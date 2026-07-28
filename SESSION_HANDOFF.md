@@ -88,9 +88,12 @@ the exact box**.
    Decide whether a "last known country" cache is worth it.
 2. **Unexplained preferences change.** At 17:42 the phone had faith=Muslim + gluten-free +
    attractions; at 17:43 the stored prefs became faith=none + halal + shopping/culture, and
-   stayed that way. Nothing in this session's diff writes preferences (`setFaith` only
-   fires on an explicit chip tap), so the cause is unknown — possibly a stray adb test
-   gesture. **Ask the owner what their settings should be; don't assume.**
+   stayed that way. Nothing in this session's diff writes preferences (`setDiets`/`setFaith`
+   only fire on an explicit chip tap), so the most likely cause is a stray adb test gesture.
+   **Ask the owner what their settings should be; don't assume.** Related owner confusion
+   worth pre-empting in the UI: **"Halal" lives under Dietary needs, not Faith & worship**,
+   so setting faith to None correctly leaves the "Halal food" chip in place. Consider making
+   that separation clearer on screen.
 3. **`Welcome.Blocked` / `Welcome.NoFix` not exercised on device** (they need a denied
    permission / disabled location). Logic is simple but unproven.
 4. **P2c** — fetch summaries during a DOWNLOAD too, so a downloaded city gets offline

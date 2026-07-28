@@ -152,6 +152,53 @@ import kotlinx.coroutines.withContext
 // far enough that a wobbling fix or a walk to the shops doesn't re-hit the network.
 private const val HERE_REBUILD_KM = 1.0
 
+/**
+ * What the Explore tab remembers between visits.
+ *
+ * Switching tabs DESTROYS this screen's composition — the bottom nav swaps the whole
+ * screen out — so every `remember` here is thrown away. Without this cache, coming back
+ * from Preferences re-acquired a location fix and re-hit OpenStreetMap from scratch:
+ * seconds of spinner for a home that hadn't changed, and your conversation gone.
+ *
+ * Deliberately process-scoped and in-memory: it's a cache, not storage. It dies with the
+ * app, so a fresh launch always gets fresh data.
+ */
+private object HomeCache {
+    // How long a fetched home stays usable. Long enough to cover flicking between tabs;
+    // short enough that a genuinely new session re-fetches. Moving >HERE_REBUILD_KM
+    // invalidates it anyway, because that builds a different area.
+    private const val FRESH_MS = 10 * 60 * 1000L
+
+    /** The area we last explored, and the fix it was built from — so returning to the
+     *  tab doesn't have to work out where you are all over again. */
+    var area: ActiveArea? = null
+    var fix: LatLng? = null
+
+    /** The conversation, so switching tabs mid-chat doesn't wipe it. */
+    val messages = mutableStateListOf<ChatMessage>()
+
+    private var places: List<Place>? = null
+    private var placesArea: ActiveArea? = null
+    // The fetch only covers the categories it asked for, which come from your interests
+    // and faith. Change those and the cached list is genuinely missing rows, so it's part
+    // of the key — otherwise ticking a new interest would silently show nothing new.
+    private var placesCategories: List<String> = emptyList()
+    private var atMs = 0L
+
+    /** The cached fetch for exactly this area + categories, or null when it can't be reused. */
+    fun placesFor(forArea: ActiveArea, categories: List<String>, nowMs: Long): List<Place>? =
+        places?.takeIf {
+            placesArea == forArea && placesCategories == categories && nowMs - atMs < FRESH_MS
+        }
+
+    fun put(forArea: ActiveArea, categories: List<String>, fetched: List<Place>, nowMs: Long) {
+        placesArea = forArea
+        placesCategories = categories
+        places = fetched
+        atMs = nowMs
+    }
+}
+
 // Example prompts shown on the empty screen to help the user get started.
 // Shown when you've set no preferences yet — a varied starting set.
 private val DEFAULT_EXAMPLES = listOf(
@@ -350,10 +397,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     // type a city, and there is deliberately NO fallback to some city you picked once: if we
     // can't work out where you are we say so, because showing another city's cafés under
     // "around you" would be a lie dressed up as a feature.
-    var aroundYou by remember { mutableStateOf<ActiveArea?>(null) }
+    // Seeded from the cache so returning from another tab doesn't start from nothing.
+    var aroundYou by remember { mutableStateOf(HomeCache.area) }
     // The fix the current `aroundYou` box was built from, so we only rebuild it once you've
     // actually MOVED — otherwise every resume would refetch the whole home.
-    var aroundYouFix by remember { mutableStateOf<LatLng?>(null) }
+    var aroundYouFix by remember { mutableStateOf(HomeCache.fix) }
     val activeArea = aroundYou
     // Bumped whenever it's worth re-checking where you are: app resumed, permission granted.
     var locationEpoch by remember { mutableStateOf(0) }
@@ -367,7 +415,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     // denial, so we have to remember. Saveable so a rotation doesn't lose the distinction.
     var askedForLocation by rememberSaveable { mutableStateOf(false) }
     val journalDao = remember { JournalDatabase.get(context).journalDao() }
-    val messages = remember { mutableStateListOf<ChatMessage>() }
+    // Lives in the cache, not in `remember`, so leaving the tab doesn't erase the chat.
+    val messages = HomeCache.messages
     var input by remember { mutableStateOf("") }
     var askedLocation by remember { mutableStateOf(false) }
     var pendingQuestion by remember { mutableStateOf<String?>(null) }
@@ -656,6 +705,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         if (previous != null && aroundYou != null && haversineKm(previous, fix) < HERE_REBUILD_KM) return@LaunchedEffect
         aroundYouFix = fix
         aroundYou = hereArea(fix, country = withContext(Dispatchers.IO) { LocationProvider.countryName(context) })
+        // Remember it for the next visit to this tab, so we don't re-locate from scratch.
+        HomeCache.fix = fix
+        HomeCache.area = aroundYou
     }
 
     // Come back to the app after travelling and the home re-checks where you are. The
@@ -690,14 +742,21 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
             essentials = emptyList(); notable = emptyList(); festivals = emptyList()
             return@LaunchedEffect
         }
-        val live = withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
+        // Already fetched this exact area a moment ago (you just came back from another
+        // tab)? Reuse it. Re-fetching an unchanged home is the difference between the tab
+        // appearing instantly and several seconds of spinner.
+        val categories = homeCategories(prefs)
+        val cached = HomeCache.placesFor(area, categories, System.currentTimeMillis())
+        val live = cached != null || withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
         if (live) {
             val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
             val origin = fixInCity(fix, area.center) ?: area.center
             // ONE live fetch feeds every card (daily needs, worth-visiting, for-you, worship).
             // null ⇒ the fetch FAILED despite isOnline (e.g. a "connected" VPN with a dead
             // tunnel) → fall through to the offline path rather than showing an empty home.
-            val home = withContext(Dispatchers.IO) { LiveSource.places(area, homeCategories(prefs), origin) }
+            val home = cached
+                ?: withContext(Dispatchers.IO) { LiveSource.places(area, categories, origin) }
+                    ?.also { HomeCache.put(area, categories, it, System.currentTimeMillis()) }
             if (home != null) {
                 hasCity = true
                 offlineArea = false

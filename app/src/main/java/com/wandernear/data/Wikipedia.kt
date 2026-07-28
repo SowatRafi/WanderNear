@@ -29,13 +29,24 @@ object Wikipedia {
     data class Summary(val text: String, val url: String?)
 
     /**
+     * Summaries already fetched this session, keyed by the OSM tags that produced them.
+     * An article doesn't change while you're using the app, and the same places come back
+     * every time you revisit the home or ask a similar question — without this, each visit
+     * re-fetched write-ups we already had. Bounded in practice by how many wiki-linked
+     * places one session actually shows (a handful), and gone when the process ends.
+     */
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Summary>()
+
+    /**
      * The summary for a place's OSM wiki links, or null if it has none, none resolves, or
      * the article is a disambiguation / has no extract.
      */
     suspend fun summaryFor(wikipediaTag: String?, wikidataId: String?): Summary? =
         withContext(Dispatchers.IO) {
+            val key = "${wikipediaTag.orEmpty()}|${wikidataId.orEmpty()}"
+            cache[key]?.let { return@withContext it }
             val (lang, title) = resolveTitle(wikipediaTag, wikidataId) ?: return@withContext null
-            fetchSummary(lang, title)
+            fetchSummary(lang, title)?.also { cache[key] = it }
         }
 
     /** Which Wikipedia article (language + title) a place points to. Prefers the direct
