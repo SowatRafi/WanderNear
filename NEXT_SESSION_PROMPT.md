@@ -2,27 +2,35 @@
 
 Copy the box below and paste it as your **first message** in a new Claude Code session
 (run from `C:\Users\sowad\Documents\WanderNear`). It's self-contained: it points the
-new session at the docs, restates the rules, and defines the next task (no `<<PICK ONE>>`).
+new session at the docs, restates the rules, and defines the next task.
 
 ---
 
 ```
 We're continuing WanderNear — a native Android (Kotlin + Jetpack Compose) local-guide app for travellers.
 
-Read these two files FULLY before doing anything:
-- CLAUDE.md          (conventions, decisions, full milestone log)
-- PROJECT_STATUS.md  (current status, build/run steps, gotchas, vision backlog)
+Read these three files FULLY before doing anything:
+- CLAUDE.md            (conventions, decisions, full milestone log)
+- PROJECT_STATUS.md    (current status, build/run steps, gotchas)
+- SESSION_HANDOFF.md   (what last session did, and the UNFINISHED work waiting for you)
 
-State: latest commit fcb9764, working tree clean, everything verified on my Pixel 6 and pushed to origin/main.
+STATE — read carefully, the working tree is NOT clean:
+- Last session completed the ONLINE-FIRST pivot in three phases: L1 live chat (05fd7e0),
+  L2 live home (ef10ac1), L3 offline fallback (7ef81c7). All committed, pushed, verified on my Pixel 6.
+- The app now fetches places LIVE from OpenStreetMap by default; downloading a city is my
+  OPTIONAL choice for offline use. Bundled Melbourne is no longer auto-loaded.
+- UNCOMMITTED work in progress: "Phase 2" — Wikipedia stories for live results
+  (new data/Wikipedia.kt + changes to Place.kt, LiveSource.kt, ChatScreen.kt).
+  It builds and tests pass, but it is NOT verified and it still has debug logging in it.
 
 Standing rules — follow exactly:
 - Plan first, get my approval, THEN build. Small, well-commented steps a beginner can follow.
 - Always use the `ponytail` skill (simplest solution, no over-engineering) on coding, the
   `ui-ux-pro-max` skill on any UI/UX work, and `ruflo` — search its "wandernear" namespace
   memory before planning. (Don't re-dump the skills every time; apply them.)
-- NEVER hallucinate: every recommendation comes from a real retrieved SQLite row; refuse honestly
-  when there's no match. The AI only REWORDS retrieved rows — it never fetches or invents.
-  Keep core/ free of Android imports.
+- NEVER hallucinate: every recommendation comes from a REAL retrieved row — live OSM or a
+  downloaded pack. Refuse honestly when there's no match. The AI only REWORDS retrieved rows;
+  it never fetches or invents. Keep core/ free of Android imports.
 - NEVER send my GPS off the device. Fetch data by city/area NAME only; rank "near me" on-device.
 - Verify each change: build with the Android Studio JBR, run on my connected Pixel 6 for any UI
   change (screenshot it), adversarially review, THEN commit + push with a clear message.
@@ -32,63 +40,35 @@ Standing rules — follow exactly:
   PowerShell mangles multi-line git -m; use `git commit -F <file>`. `>` corrupts PNGs — use
   `adb shell screencap -p /sdcard/x.png` then `adb pull`.
 
-NEXT TASK — make the app ONLINE-FIRST with offline as the FALLBACK, and remove the bundled Melbourne.
-Agreed model (grounding + privacy stay intact):
-- Online  -> fetch the city's data fresh from the internet (OpenStreetMap + Wikipedia), save it on the phone.
-- Offline -> fall back to that saved data. Offline still works; it's the fallback now, not the default.
-- The fetcher hits the internet; the AI only rewords the fetched-and-stored rows (still can't invent).
-- Fetch by city/area NAME; rank "near you" locally — my GPS never leaves the phone.
+NEXT TASK — finish and verify Phase 2 (Wikipedia "stories" for live results).
+The point: give ANY city the rich write-ups only the old bundled Melbourne had, so attraction
+cards show a real "why" and the home's "Worth visiting" shows a 1-2 line snippet.
+Grounding rule for this feature: fetch a summary ONLY for a place OpenStreetMap ALREADY links
+to Wikipedia (its `wikipedia` or `wikidata` tag). Never guess which article belongs to a place.
 
-Do it in safe phases (plan EACH with me first):
-1. Remove built-in Melbourne + online-first first run: fresh app -> "No city yet" welcome -> fetch my
-   city while online -> fully offline after. (The fetch flow + the "No city yet" screen already exist.)
-2. Enrich fetched cities: add Wikipedia place "stories" to the on-device fetch so ANY city gets the
-   travel-buddy Listen / rich "Worth visiting" that only the bundled Melbourne has today.
-3. Auto-refresh the active city when online (the deferred background refresh, M6.4e).
+Do this:
+1. Review the uncommitted Phase 2 code and tell me plainly whether it's sound.
+2. REMOVE the leftover debug logging — two android.util.Log.d("WNWIKI", ...) lines in
+   data/LiveSource.kt (~lines 128 and 132).
+3. Verify the happy path properly on my Pixel 6. Last session never actually saw a story
+   render, because everything it tested (Werribee, outer Melbourne) has NO OSM wiki tags.
+   Use a small, landmark-rich area instead (e.g. Federation Square or Melbourne CBD), then ask
+   for "attractions"/"museums" and screenshot a real Wikipedia sentence on the cards.
+   If it genuinely can't show one, tell me that honestly — do NOT loosen the OSM-link rule to
+   force a match, and do not fake it.
+4. Then commit + push.
 
-IMPORTANT timing: my phone is often in AIRPLANE MODE with only Melbourne installed. Do NOT remove the
-bundled Melbourne until I'm online / have fetched another city, or I'll be left with no data.
+After that, ask me before starting either of these:
+- P2c: fetch summaries during a DOWNLOAD too, so a downloaded city also gets offline stories
+  and Travel Mode's Read/Listen.
+- Phase 3 (M6.4e): silent background refresh of the active area when online.
 
-Start with Phase 1: search ruflo "wandernear", read the code it touches, propose a short plan, and wait
-for my go-ahead.
+Heads-up from last session's testing (saves you pain):
+- My phone runs a VPN. When WiFi drops, the VPN still claims to be connected — that already
+  bit us once. `adb shell svc wifi disable` is also async: wait ~5s and confirm
+  "Active default network: none" before you launch, and re-check it between offline tests
+  because the phone re-enables WiFi on its own.
+- An empty files/packs/ and a missing melbourne.db is CORRECT now (online-first), not a bug.
+- My phone currently has NO downloaded city and its active area is Melbourne (live), so it
+  will show "You're offline" if it loses signal. That's the intended behaviour.
 ```
-
----
-
-## What we did THIS session (all committed + pushed, verified on the Pixel 6)
-
-Newest first — commits `e646d02` → `fcb9764`:
-
-| Commit | What it delivered |
-|---|---|
-| `fcb9764` | **Delete your last city.** Removed the "keep at least one city" guard; deleting your only city now shows a friendly **"No city yet"** welcome instead of crashing. New `CityDatabase.hasAnyCity(context)` gates every home query/search so a missing pack never reaches `open()`. Fixed a trap: the "Restore built-in Melbourne" button was hidden at zero cities — now shown whenever Melbourne is hidden. |
-| `462388f` | **Deletable built-in Melbourne (restorable).** Melbourne is bundled + auto-re-seeds, so a hidden-marker file (`melbourne.db.hidden`) makes `seedBundled` bail out; `CityDatabase.deleteBundled`/`restoreBundled` toggle it; a "Restore built-in Melbourne" button re-seeds from the APK. |
-| `40bcb67` | **Travel-buddy story alerts + Listen (TM.4).** Passing a place that has a Wikipedia summary → a single grounded "there's a story here" alert → **Read** (in-app `StorySheet` with the stored summary + CC BY-SA + Directions) or **Listen** (on-device `TextToSpeech` reads the grounded summary aloud). Ask-first, one de-duped alert per place. TTS is owned by `MainActivity` (singleTop), opened via `getActivity` intents — no background service to zombie. Adversarially reviewed (5 fixes). |
-| `98a2088` | **Warmer home hero + delete downloaded cities.** Hero now opens with a time-aware greeting ("Good morning/afternoon/evening" + a pin on the place name) replacing the clinical "WHERE YOU ARE". Each downloaded city got a trash button (`CityPackBuilder.deleteInstalled`). |
-| `13acae7` | **Full UI redesign** — a warm **teal + amber** design system. New `ui/theme/` (hand-tuned light+dark `ColorScheme` + `categoryTint`, type scale, shapes, edge-to-edge) and `ui/Components.kt` (`WnCard`, `SectionHeader`, `CategoryBadge`, `WnActionButton`, `MoodChip`). Every screen reworked (hero, colourful place cards, chat bubbles, pill + circular-FAB input, Preferences, My Trips); real vector nav icons via `material-icons-extended`. **No data/retrieval/grounding logic changed.** Adversarially reviewed by 2 agents (12 fixes: touch targets, WCAG contrast, RTL icons, a latent home-dedup bug). |
-| `e646d02` | **Preference-aware retrieval (PH.1).** Fixed the reported bug: with faith set (e.g. Buddhist), "I want to see the religious places" returned nothing. `QueryParser` now understands "religious/religion/faith/spiritual", and a saved faith filters worship (Buddhist → Buddhist temples), mirroring the diet→food rule; the reply reads it back ("Buddhist places of worship"). New JVM tests. |
-
-## What's NEXT (approved direction — NOT started)
-
-The **online-first, offline-fallback re-architecture** described in the prompt box above, in 3 phases.
-Key decisions already made with the owner:
-- Remove the bundled Melbourne; the app fetches the user's city from the internet (already possible via
-  `CityPackBuilder` / "Add a city"), stores it, and works offline after that.
-- Offline is NOT optional — fetched cities are still saved and fully usable offline; there's just no
-  pre-loaded city.
-- Grounding and privacy are non-negotiable and stay: deterministic fetch → grounded SQLite rows → AI
-  rewords them; fetch by area name, rank near-me on-device.
-- Fetched cities are currently "thinner" than bundled Melbourne (no place-level Wikipedia summaries →
-  no Listen / barer "Worth visiting"); Phase 2 adds that enrichment.
-- The bundled Melbourne is the ONLY pack with place summaries + the richest content today.
-
-## One-glance state of the app
-
-- Opens on a warm home (greeting + your suburb/city, essentials as pills), a "mood" chip row, a "For you"
-  card of grounded places matching your Preferences, prayer times / nearest place of worship for your
-  faith, "daily needs", festivals — then a grounded chat with reworded AI replies + rich cards.
-- Travel Mode: ongoing banner + "around you now" + grounded "worth a visit" / "there's a story here"
-  alerts (Read / Listen). Cities: switch, add (download any city), delete (incl. Melbourne, restorable).
-- Bundled Melbourne pack (v3): ~22.6k places incl. culture venues + 22 festivals; worship for every faith.
-- JVM unit tests green (grounding, query parser, classifier, festivals, prayer times, nearby).
-- Full detail: `CLAUDE.md` (milestone log + decisions) and `PROJECT_STATUS.md` (status, gotchas, vision).
