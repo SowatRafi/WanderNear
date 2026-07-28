@@ -18,4 +18,15 @@ data class UserPreferences(
                                               // gets today's calculated prayer times.
     val prayerMethod: String = "MWL",         // PrayerTimes.Method name (calc convention)
     val prayerAsr: String = "STANDARD",       // PrayerTimes.Asr name (juristic method)
-)
+) {
+    /**
+     * The diets to actually filter food by: the ones you picked, or — if you picked none —
+     * the one your faith implies (Muslim ⇒ halal, Jewish ⇒ kosher; see [Faith.impliedDiet]).
+     *
+     * A diet you chose ALWAYS wins, so a Muslim who selects vegetarian gets vegetarian, not
+     * halal. This mirrors how a saved faith fills in a worship search only when the query
+     * didn't name a religion — the preference fills gaps, it never overrides you.
+     */
+    val effectiveDiets: Set<String>
+        get() = diets.ifEmpty { setOfNotNull(Faith.fromKey(faith)?.impliedDiet) }
+}

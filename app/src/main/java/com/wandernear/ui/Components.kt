@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Church
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.LocalParking
@@ -189,6 +190,11 @@ fun WnActionButton(
 
 @Composable fun WebsiteButton(onClick: () -> Unit) =
     WnActionButton(Icons.Filled.Language, "Website", onClick, MaterialTheme.colorScheme.secondary)
+
+/** Shown ONLY on a place that really has a Wikipedia write-up — so the button appearing
+ *  is itself the honest signal that there's a history to read, and nothing is invented. */
+@Composable fun StoryButton(onClick: () -> Unit) =
+    WnActionButton(Icons.Filled.MenuBook, "Story", onClick, MaterialTheme.colorScheme.tertiary)
 
 /**
  * A tappable suggestion pill for the "what are you in the mood for?" row — a friendly,

@@ -24,6 +24,23 @@ enum class Faith(val key: String, val label: String, val placeType: String) {
         get() = if (this == MUSLIM) "Friday time is set by the mosque."
         else "Service times are set by the $placeType."
 
+    /**
+     * The dietary rule this faith implies, as an OSM `diet:*` value — used ONLY to fill
+     * the gap when the user hasn't chosen a diet themselves. A diet they picked always
+     * wins, so a Muslim who selects vegetarian gets vegetarian.
+     *
+     * Deliberately only Islam and Judaism. Those two have a named dietary law that OSM
+     * actually tags (`diet:halal`, `diet:kosher`), so the filter stays grounded in real
+     * data. The other faiths have no single universal rule — assuming a Hindu or Buddhist
+     * wants vegetarian would be a stereotype, and there'd be no honest tag behind it.
+     */
+    val impliedDiet: String?
+        get() = when (this) {
+            MUSLIM -> "halal"
+            JEWISH -> "kosher"
+            else -> null
+        }
+
     companion object {
         /** The [Faith] for an OSM religion key, or null (none / unsupported). */
         fun fromKey(key: String?): Faith? = entries.firstOrNull { it.key == key }

@@ -85,9 +85,19 @@ private enum class Tab(val label: String, val selectedIcon: ImageVector, val ico
     Preferences("Preferences", Icons.Filled.Tune, Icons.Outlined.Tune),
 }
 
-/** The place a Travel Mode "story" notification asked us to open — a real grounded
- *  place with its stored Wikipedia summary. Read-only; nothing here is invented. */
-private data class StoryArgs(val name: String, val summary: String, val lat: Double, val lng: Double)
+/** A place whose real Wikipedia write-up we're showing — grounded, never invented. */
+data class StoryArgs(val name: String, val summary: String, val lat: Double, val lng: Double)
+
+/**
+ * Somewhere any screen can ask for the story reader to open.
+ *
+ * The reader lives in the Activity because the Activity owns the on-device text-to-speech
+ * that "Listen" uses. Rather than give the Explore tab a second speech engine, it just
+ * puts a place here and the Activity shows the sheet.
+ */
+object StoryRequest {
+    val open = mutableStateOf<StoryArgs?>(null)
+}
 
 class MainActivity : ComponentActivity() {
     // Set when a Travel Mode "read about this place" notification opens the app.
@@ -123,11 +133,13 @@ class MainActivity : ComponentActivity() {
             WanderNearTheme {
                 ReminderBootstrap()            // ask once, then run the on-open checks
                 AppScaffold(prefsRepo)
-                storyState.value?.let { args ->
+                // A story opened either by a Travel Mode notification or by tapping a
+                // place on the Explore tab — the same reader, so Listen works from both.
+                (storyState.value ?: StoryRequest.open.value)?.let { args ->
                     StorySheet(
                         args = args,
                         onListen = { speak("${args.name}. ${args.summary}") },
-                        onDismiss = { storyState.value = null },
+                        onDismiss = { storyState.value = null; StoryRequest.open.value = null },
                     )
                 }
             }

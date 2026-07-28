@@ -72,6 +72,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.wandernear.StoryArgs
+import com.wandernear.StoryRequest
 import com.wandernear.core.model.ActiveArea
 import com.wandernear.core.model.AWAY_FROM_CITY_KM
 import com.wandernear.core.model.HERE_NAME
@@ -213,10 +215,13 @@ private val DEFAULT_EXAMPLES = listOf(
  */
 private fun exampleChips(prefs: UserPreferences): List<String> {
     val chips = LinkedHashSet<String>()
-    prefs.diets.forEach { d -> dietChip(d)?.let { chips += it } }
+    // effectiveDiets, so a Muslim who hasn't picked a diet still gets "Halal food" —
+    // and one they DID pick replaces it rather than sitting alongside.
+    val diets = prefs.effectiveDiets
+    diets.forEach { d -> dietChip(d)?.let { chips += it } }
     prefs.interests.forEach { i ->
         // A diet already implies food, so skip a plain "Food" chip when one is set.
-        if (i == "food" && prefs.diets.isNotEmpty()) return@forEach
+        if (i == "food" && diets.isNotEmpty()) return@forEach
         interestChip(i)?.let { chips += it }
     }
     Faith.fromKey(prefs.faith)?.let { chips += faithChip(it) }
@@ -363,9 +368,14 @@ private fun packContaining(context: Context, fix: LatLng): String? {
  *  template. Empty in → the honest refusal, and the AI is never called. Shared by the live and
  *  the offline-pack paths so both answer identically. */
 private suspend fun buildRecommendation(
-    context: Context, question: String, places: List<Place>, spec: SearchSpec,
+    context: Context, question: String, rawPlaces: List<Place>, spec: SearchSpec,
     nearYou: Boolean, cityName: String?, aiEnabled: Boolean,
 ): ChatMessage {
+    // OSM frequently holds one real place twice — a node AND a way (or a building) — which
+    // showed up as the same name listed three times in a row. The list is ranked nearest
+    // first, so keeping the first of each name keeps the closest copy. Same rule the home
+    // cards already use; doing it here covers the live and pack paths at once.
+    val places = rawPlaces.distinctBy { it.name }
     if (places.isEmpty()) return ChatMessage(Role.Assistant, Recommender.NO_RESULTS)
     val cards = places.map { RecCard(it, Recommender.reason(it, spec)) }
     val intro = if (aiEnabled) {
@@ -637,6 +647,19 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
                 val origin = here ?: center
                     ?: return@withContext ChatMessage(Role.Assistant, Recommender.NO_RESULTS)
                 val places = pdb.search(spec, origin)
+                // We only got here on a FAILED live fetch, so an empty result doesn't mean
+                // "this doesn't exist" — it means we quietly searched your smaller offline
+                // copy instead. Say that, rather than let the app look like it's missing
+                // places that are really out there.
+                if (places.isEmpty() && useLive) {
+                    val packName = pdb.cityInfo()?.name
+                    return@withContext ChatMessage(
+                        Role.Assistant,
+                        "I couldn't reach OpenStreetMap just then, so I searched your downloaded " +
+                            (packName?.let { "$it data" } ?: "offline data") +
+                            " instead and found nothing matching. Ask me again in a moment and I'll search live.",
+                    )
+                }
                 buildRecommendation(context, question, places, spec, here != null, pdb.cityInfo()?.name, aiEnabled)
             }
             if (placeholderIndex != null) messages[placeholderIndex] = answer else messages += answer
@@ -863,9 +886,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val home = liveHome
         if (home != null) {
             // Diet filters food only.
+            // effectiveDiets: a saved diet, else the one your faith implies (Muslim ⇒ halal).
+            val diets = prefs.effectiveDiets
             val picks = home
                 .filter { it.category in prefs.interests }
-                .filter { it.category != "food" || prefs.diets.isEmpty() || prefs.diets.any { d -> d in it.diets } }
+                .filter { it.category != "food" || diets.isEmpty() || diets.any { d -> d in it.diets } }
                 .take(5)
             forYou = picks
             // Enrich with grounded Wikipedia stories (only the wiki-linked ones fetch), in place —
@@ -880,7 +905,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val center = withContext(Dispatchers.IO) { pdb.cityCenter() }
         val origin = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center)
             ?: center ?: run { forYou = emptyList(); return@LaunchedEffect }
-        forYou = withContext(Dispatchers.IO) { pdb.forYou(origin, prefs.interests.toList(), prefs.diets) }
+        forYou = withContext(Dispatchers.IO) { pdb.forYou(origin, prefs.interests.toList(), prefs.effectiveDiets) }
     }
 
     // Keep the newest message in view.
@@ -1404,6 +1429,8 @@ private fun NotableCard(
             PlaceRow(place, meta, snippet = place.summary) {
                 DirectionsButton { onDirections(place) }
                 SaveButton { onSave(place) }
+                // Only offered when this place really has a write-up — see openStory.
+                if (!place.summary.isNullOrBlank()) StoryButton { openStory(place) }
             }
         }
     }
@@ -1643,8 +1670,21 @@ private fun RecommendationCard(card: RecCard, onDirections: (Place) -> Unit, onS
         ActionRow {
             DirectionsButton { onDirections(place) }
             SaveButton { onSave(place) }
+            // "Tell me the history" — the full write-up, but only where one really exists.
+            if (!place.summary.isNullOrBlank()) StoryButton { openStory(place) }
         }
     }
+}
+
+/**
+ * Opens the reader sheet on a place's real Wikipedia write-up (full text, CC BY-SA
+ * credit, Listen, Directions). The card only shows the button when `summary` is present,
+ * so this can never be asked to tell a history we don't actually have — for a place with
+ * no article we say nothing rather than invent one.
+ */
+private fun openStory(place: Place) {
+    val text = place.summary?.takeIf { it.isNotBlank() } ?: return
+    StoryRequest.open.value = StoryArgs(place.name, text, place.lat, place.lng)
 }
 
 @Composable

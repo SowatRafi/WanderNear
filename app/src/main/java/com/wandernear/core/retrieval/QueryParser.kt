@@ -50,6 +50,12 @@ object QueryParser {
         "museum" to "attraction", "museums" to "attraction", "gallery" to "attraction",
         "attraction" to "attraction", "attractions" to "attraction", "landmark" to "attraction",
         "monument" to "attraction", "sightseeing" to "attraction",
+        // "What's the history here?" — the `attraction` category already holds OSM's
+        // historic=* places (monuments, memorials, ruins, castles) as well as museums,
+        // so these words route there. They're the places that actually carry a write-up.
+        "history" to "attraction", "historic" to "attraction", "historical" to "attraction",
+        "heritage" to "attraction", "ruins" to "attraction", "castle" to "attraction",
+        "memorial" to "attraction",
         "park" to "outdoor", "parks" to "outdoor", "beach" to "outdoor", "beaches" to "outdoor",
         "hike" to "outdoor", "hiking" to "outdoor", "trail" to "outdoor", "nature" to "outdoor",
         "outdoor" to "outdoor", "outdoors" to "outdoor", "viewpoint" to "outdoor", "garden" to "outdoor",
@@ -109,7 +115,10 @@ object QueryParser {
 
         // Saved diet preferences also constrain food searches, so a vegetarian
         // user's plain "food near me" is filtered to vegetarian-friendly places.
-        val effectiveDiets = if (category == "food") (diets + prefs.diets) else emptySet()
+        // `effectiveDiets` falls back to the diet the user's FAITH implies when they
+        // picked none (Muslim ⇒ halal), so "food near me" respects it without them
+        // having to tick the box twice. A diet they chose always wins.
+        val effectiveDiets = if (category == "food") (diets + prefs.effectiveDiets) else emptySet()
 
         // The parallel for faith: a saved faith narrows a worship search to that
         // faith's places, so a Buddhist asking for "religious places" gets Buddhist

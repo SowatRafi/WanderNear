@@ -28,6 +28,51 @@ class QueryParserTest {
         assertTrue("vegetarian" in spec.diets)
     }
 
+    // --- A saved faith implies a diet, but never overrides one you chose ---
+
+    @Test
+    fun faithImpliesItsDietWhenNoneChosen() {
+        // Muslim with no diet ticked: plain "food" should still be filtered to halal.
+        val spec = QueryParser.parse("food", UserPreferences(faith = "muslim"))
+        assertEquals("food", spec.category)
+        assertTrue("halal" in spec.diets)
+    }
+
+    @Test
+    fun chosenDietWinsOverTheFaithsImpliedOne() {
+        // A Muslim who picked vegetarian wants vegetarian — we must not force halal on them.
+        val prefs = UserPreferences(diets = setOf("vegetarian"), faith = "muslim")
+        val spec = QueryParser.parse("food", prefs)
+        assertTrue("vegetarian" in spec.diets)
+        assertTrue("halal" !in spec.diets)
+    }
+
+    @Test
+    fun faithWithNoDietaryLawImpliesNoDiet() {
+        // Only Islam and Judaism have a named dietary law OSM actually tags. Assuming a
+        // Hindu wants vegetarian would be a stereotype with no grounded tag behind it.
+        val spec = QueryParser.parse("food", UserPreferences(faith = "hindu"))
+        assertEquals("food", spec.category)
+        assertTrue(spec.diets.isEmpty())
+    }
+
+    @Test
+    fun faithDietDoesNotLeakIntoNonFoodSearches() {
+        val spec = QueryParser.parse("museums", UserPreferences(faith = "muslim"))
+        assertEquals("attraction", spec.category)
+        assertTrue(spec.diets.isEmpty())
+    }
+
+    // --- "What's the history here?" has to actually route somewhere ---
+
+    @Test
+    fun historyWordsFindAttractions() {
+        for (word in listOf("history", "historic", "heritage", "ruins", "castle", "memorial")) {
+            val spec = QueryParser.parse(word, UserPreferences())
+            assertEquals("attraction for \"$word\"", "attraction", spec.category)
+        }
+    }
+
     @Test
     fun detectsWorshipAndReligion() {
         val spec = QueryParser.parse("a mosque", UserPreferences())
