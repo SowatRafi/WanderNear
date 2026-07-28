@@ -1,3 +1,14 @@
-# The only third-party library the pipeline needs. Everything else (sqlite3,
-# json, time) is part of Python's standard library.
+# Third-party libraries the pipeline needs. Everything else (sqlite3, json,
+# time) is part of Python's standard library. Neither of these ships in the app —
+# they are build-time only.
+
+# For the Overpass-based scripts (fetch_osm, enrich_wikipedia, fetch_festivals).
 requests>=2.31
+
+# For build_pack.py, which reads Geofabrik .osm.pbf extracts instead of calling
+# Overpass. This is how packs are built for RELEASE — see DEPLOY.md.
+osmium>=4.0
+
+# PowerShell gotcha when running build_pack.py: an argument starting with "-" is
+# read as a PowerShell parameter, so a southern-hemisphere bbox needs the = form:
+#     "--bbox=-38.10,144.45,-37.50,145.45"
