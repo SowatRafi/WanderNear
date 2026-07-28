@@ -48,6 +48,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.wandernear.data.CityDatabase
 import com.wandernear.data.CityPackBuilder
+import com.wandernear.data.LocationProvider
+import com.wandernear.data.PackCatalogue
 import com.wandernear.data.PreferencesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,60 +89,46 @@ fun CitiesSection(repo: PreferencesRepository) {
         installed = withContext(Dispatchers.IO) { installedPacks(context) }
     }
 
-    var query by remember { mutableStateOf("") }
-    var searching by remember { mutableStateOf(false) }
-    var matches by remember { mutableStateOf<List<CityPackBuilder.Match>>(emptyList()) }
     // One status line, plus whether it's a problem (so it isn't colour-only).
     var message by remember { mutableStateOf<String?>(null) }
     var isError by remember { mutableStateOf(false) }
-    // The match awaiting the "Download data for …?" confirmation, if any.
-    var confirming by remember { mutableStateOf<CityPackBuilder.Match?>(null) }
+    // The pack awaiting the "Download …?" confirmation, if any.
+    var confirming by remember { mutableStateOf<PackCatalogue.Pack?>(null) }
     // The installed pack awaiting a "Delete …?" confirmation, if any.
     var deleting by remember { mutableStateOf<InstalledPack?>(null) }
-    // Non-null only while a build runs — it doubles as "are we building?".
+    // Non-null only while a download runs — it doubles as "are we downloading?".
     var progress by remember { mutableStateOf<Float?>(null) }
     var buildJob by remember { mutableStateOf<Job?>(null) }
     val building = progress != null
 
-    /** Ask OSM which real areas match what was typed. */
-    fun runSearch() {
-        focus.clearFocus()          // drop the keyboard so results are visible
-        searching = true
-        message = null
-        val typed = query.trim()
-        scope.launch {
-            val found = CityPackBuilder.find(typed)
-            matches = found
-            if (found.isEmpty()) {
-                // One honest message covering BOTH causes — a typo and being offline
-                // look identical from here, so we never claim to know which it was.
-                message = "Couldn't find \"$typed\" — check the spelling, and that you're online."
-                isError = true
-            }
-            searching = false
-        }
+    // What's available to download. Loaded once; null until we know, so the UI can tell
+    // "still loading" apart from "couldn't reach the catalogue".
+    var catalogue by remember { mutableStateOf<List<PackCatalogue.Pack>?>(null) }
+    var catalogueFailed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        // Ordered for where you are, so the pack covering you is the first thing you see.
+        // The fix is used ON-DEVICE only, to sort — it is never sent anywhere.
+        val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
+        val loaded = PackCatalogue.load(context)
+        catalogueFailed = loaded == null
+        catalogue = loaded?.let { PackCatalogue.forUser(it, fix) }
     }
 
-    /** Download + build the confirmed city, then make it the active one. */
-    fun startBuild(match: CityPackBuilder.Match) {
+    /** Download the confirmed pack, then make it the active city. */
+    fun startDownload(pack: PackCatalogue.Pack) {
         progress = 0f
         message = null
         buildJob = scope.launch {
             try {
-                when (val result = CityPackBuilder.build(context, match) { progress = it }) {
-                    is CityPackBuilder.Result.Success -> {
-                        // Remember BOTH the area and its pack, so that if you lose signal inside
-                        // this city the app knows which downloaded pack covers where you are.
-                        repo.setActiveArea(match.toActiveArea())
+                when (val result = PackCatalogue.download(context, pack) { progress = it }) {
+                    is PackCatalogue.Result.Success -> {
                         repo.setActivePack("packs/" + result.file.name)
-                        matches = emptyList()
-                        query = ""
-                        // "%,d" groups thousands — 10,326 reads far better than 10326.
-                        message = "${match.shortLabel} is ready — %,d places, ".format(result.placeCount) +
-                            "and now works offline too."
+                        // "%,d" groups thousands — 21,149 reads far better than 21149.
+                        message = "${pack.name} is ready — %,d places, and now works offline too."
+                            .format(pack.places)
                         isError = false
                     }
-                    is CityPackBuilder.Result.Failure -> {
+                    is PackCatalogue.Result.Failure -> {
                         message = result.message
                         isError = true
                     }
@@ -208,46 +196,52 @@ fun CitiesSection(repo: PreferencesRepository) {
                 )
             }
 
-            // --- 2. Download a city for offline ----------------------------------
+            // --- 2. Available to download ----------------------------------------
+            // Ready-made packs we publish. No typing and no geocoding: the one covering
+            // where you are is simply first in the list.
             Spacer(Modifier.height(16.dp))
-            Text("Download a city", style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                // A real label, not just a placeholder — it stays visible while typing.
-                label = { Text("City name") },
-                placeholder = { Text("e.g. Kyoto, Japan") },
-                singleLine = true,
-                enabled = !building,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                // The keyboard's own Search key does the same as the button.
-                keyboardActions = KeyboardActions(onSearch = { runSearch() }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                // Searching only on an explicit tap (never per keystroke) also keeps us
-                // inside OpenStreetMap's 1-request-per-second usage policy.
-                onClick = { runSearch() },
-                enabled = query.isNotBlank() && !searching && !building,
-            ) { Text(if (searching) "Searching…" else "Search") }
+            Text("Available to download", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(4.dp))
 
-            // Matches: OSM's full name for each, so the right one is unmistakable.
-            // Hidden (not discarded) while building, so Cancel brings them back.
-            if (!building) {
-                matches.forEach { match ->
+            val available = catalogue
+            when {
+                available == null && !catalogueFailed -> Text(
+                    "Checking what's available…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                catalogueFailed -> Text(
+                    "Couldn't reach the list of cities — check your connection and reopen this screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+                available.isNullOrEmpty() -> Text(
+                    "No cities published yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Hidden (not discarded) while downloading, so Cancel brings the list back.
+                !building -> available.forEach { pack ->
+                    val alreadyHave = installed.any { it.packName == "packs/" + pack.fileName }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
-                            .clickable { confirming = match }
+                            .clickable(enabled = !alreadyHave) { confirming = pack }
                             .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column {
-                            Text(match.shortLabel, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                match.label,
+                                listOfNotNull(pack.name, pack.country).joinToString(", "),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                // Size and place count are what decide whether it's worth
+                                // downloading, so they're on the row, not behind a tap.
+                                if (alreadyHave) "Already downloaded" else pack.summary,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -262,14 +256,14 @@ fun CitiesSection(repo: PreferencesRepository) {
                 LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Building your offline pack… ${(fraction * 100).toInt()}%",
+                    "Downloading… ${(fraction * 100).toInt()}%",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                // ponytail: the build is tied to this screen, exactly like the AI model
+                // ponytail: the download is tied to this screen, exactly like the AI model
                 // download above it. Hoist it into a service if leaving the screen
                 // mid-download ever becomes a real annoyance.
                 Text(
-                    "Keep this screen open — a big city can take a couple of minutes.",
+                    "Keep this screen open until it finishes.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -289,21 +283,22 @@ fun CitiesSection(repo: PreferencesRepository) {
             }
     }
 
-    // Confirm the exact area before downloading — the full OSM name makes "Paris, France"
-    // versus "Paris, Texas" unmistakable, so we never quietly fetch the wrong place.
-    confirming?.let { match ->
+    // Confirm before spending someone's data allowance — the size is the fact that
+    // decides it, so it leads.
+    confirming?.let { pack ->
         AlertDialog(
             onDismissRequest = { confirming = null },
-            title = { Text("Download ${match.shortLabel}?") },
+            title = { Text("Download ${pack.name}?") },
             text = {
                 Text(
-                    "${match.label}\n\n" +
-                        "Saves this city's places to your phone (a few MB) so it works with no " +
-                        "signal at all. You don't need this to explore while you're online.",
+                    "${pack.summary}\n\n" +
+                        "Saves this city's places to your phone so it works with no signal at " +
+                        "all. You don't need this to explore while you're online." +
+                        (pack.built?.let { "\n\nData from $it." } ?: ""),
                 )
             },
             confirmButton = {
-                TextButton(onClick = { confirming = null; startBuild(match) }) { Text("Download") }
+                TextButton(onClick = { confirming = null; startDownload(pack) }) { Text("Download") }
             },
             dismissButton = {
                 TextButton(onClick = { confirming = null }) { Text("Cancel") }
