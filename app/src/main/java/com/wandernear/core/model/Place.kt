@@ -36,6 +36,10 @@ data class Place(
     // place that has one is your locality. Absent on most places — that's fine, we just
     // look at the next nearest rather than inventing a name.
     val suburb: String? = null,
+    // OSM's raw `opening_hours` tag, e.g. "Mo-Fr 09:00-17:00; Sa 10:00-14:00". Interpreted
+    // on-device by core/opening/OpeningHours — absent on most places, which honestly means
+    // "hours not listed", never "closed".
+    val openingHours: String? = null,
     val diets: Set<String> = emptySet(),  // dietary tags present (value != "no")
     val distanceKm: Double? = null,       // filled in when we rank by distance
 )

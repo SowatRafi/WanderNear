@@ -87,6 +87,7 @@ import com.wandernear.core.model.LatLng
 import com.wandernear.core.model.Place
 import com.wandernear.core.model.UserPreferences
 import com.wandernear.core.model.categoryLabel
+import com.wandernear.core.opening.OpeningHours
 import com.wandernear.core.model.distanceLabel
 import com.wandernear.core.model.fixInCity
 import com.wandernear.core.prayer.PrayerTimes
@@ -257,6 +258,29 @@ private fun faithChip(faith: Faith): String = when (faith) {
     Faith.HINDU -> "Hindu temples"
     Faith.BUDDHIST -> "Buddhist temples"
     Faith.SIKH -> "Gurdwaras"
+}
+
+/**
+ * "Open now" for a place, or null when we genuinely don't know — which is most places,
+ * because `opening_hours` is optional in OSM. Showing nothing is the honest answer there;
+ * writing "Closed" would invent a fact and send someone away from an open door.
+ *
+ * Returns the label plus whether it's open, so the caller can colour it (the words carry
+ * the meaning on their own — colour is only reinforcement).
+ */
+private fun openNowLabel(place: Place): Pair<String, Boolean>? {
+    val cal = java.util.Calendar.getInstance()
+    // Calendar weeks start on Sunday (1); OpeningHours uses ISO (Monday = 1).
+    val isoDay = ((cal.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7) + 1
+    val minutes = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+    val status = OpeningHours.status(place.openingHours, isoDay, minutes)
+    return when (status.state) {
+        OpeningHours.State.OPEN ->
+            (status.until?.let { "Open now · until $it" } ?: "Open now") to true
+        OpeningHours.State.CLOSED ->
+            (status.opensAt?.let { "Closed · opens $it" } ?: "Closed") to false
+        OpeningHours.State.UNKNOWN -> null
+    }
 }
 
 /** A warm, time-of-day greeting for the home hero — a buddy saying hi. */
@@ -895,11 +919,15 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val home = liveHome
         if (home != null) {
             // Diet filters food only.
-            // effectiveDiets: a saved diet, else the one your faith implies (Muslim ⇒ halal).
-            val diets = prefs.effectiveDiets
+            // A diet you TICKED filters food; one merely implied by your faith only sorts,
+            // because OSM's diet tags are sparse and excluding on them would empty the
+            // card. Same rule as SearchSpec.softDiets.
+            val hard = prefs.diets
+            val soft = setOfNotNull(Faith.fromKey(prefs.faith)?.impliedDiet)
             val picks = home
                 .filter { it.category in prefs.interests }
-                .filter { it.category != "food" || diets.isEmpty() || diets.any { d -> d in it.diets } }
+                .filter { it.category != "food" || hard.isEmpty() || hard.any { d -> d in it.diets } }
+                .sortedByDescending { p -> p.category == "food" && soft.any { it in p.diets } }
                 .take(5)
             forYou = picks
             // Enrich with grounded Wikipedia stories (only the wiki-linked ones fetch), in place —
@@ -1493,6 +1521,16 @@ private fun PlaceRow(place: Place, meta: String, snippet: String? = null, action
                 Spacer(Modifier.height(1.dp))
                 Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            // Shown only where OSM actually lists hours — see openNowLabel.
+            openNowLabel(place)?.let { (label, isOpen) ->
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isOpen) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             // A grounded one-liner from Wikipedia — the "why it's worth a visit". Two lines
             // max keeps the home glanceable; the full story is in the chat / Travel Mode.
             snippet?.takeIf { it.isNotBlank() }?.let {
@@ -1698,6 +1736,16 @@ private fun RecommendationCard(card: RecCard, onDirections: (Place) -> Unit, onS
                         style = MaterialTheme.typography.labelMedium,
                         color = tint.icon,
                         fontWeight = FontWeight.Medium,
+                    )
+                }
+                // Shown only where OSM actually lists hours — see openNowLabel.
+                openNowLabel(place)?.let { (label, isOpen) ->
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isOpen) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

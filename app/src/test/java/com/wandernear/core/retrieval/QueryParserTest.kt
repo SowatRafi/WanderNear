@@ -31,11 +31,30 @@ class QueryParserTest {
     // --- A saved faith implies a diet, but never overrides one you chose ---
 
     @Test
-    fun faithImpliesItsDietWhenNoneChosen() {
-        // Muslim with no diet ticked: plain "food" should still be filtered to halal.
+    fun faithImpliedDietIsSOFTNotAFilter() {
+        // The one that matters: OSM's diet:halal tag is very sparse, so filtering on a
+        // faith-implied diet told a Muslim traveller there was no food anywhere. It must
+        // sort those places first, never exclude the untagged ones — an untagged café
+        // means "nobody tagged it", not "not halal".
         val spec = QueryParser.parse("food", UserPreferences(faith = "muslim"))
         assertEquals("food", spec.category)
+        assertTrue("must not hard-filter", spec.diets.isEmpty())
+        assertTrue("should prefer halal", "halal" in spec.softDiets)
+    }
+
+    @Test
+    fun aDietYouTickedIsStillAHardFilter() {
+        // Ticking halal yourself is a deliberate statement, so it does filter.
+        val spec = QueryParser.parse("food", UserPreferences(diets = setOf("halal")))
         assertTrue("halal" in spec.diets)
+        assertTrue(spec.softDiets.isEmpty())
+    }
+
+    @Test
+    fun aDietYouNamedIsStillAHardFilter() {
+        val spec = QueryParser.parse("halal food", UserPreferences(faith = "muslim"))
+        assertTrue("halal" in spec.diets)
+        assertTrue(spec.softDiets.isEmpty())
     }
 
     @Test
@@ -45,6 +64,7 @@ class QueryParserTest {
         val spec = QueryParser.parse("food", prefs)
         assertTrue("vegetarian" in spec.diets)
         assertTrue("halal" !in spec.diets)
+        assertTrue("halal" !in spec.softDiets)
     }
 
     @Test
@@ -54,6 +74,7 @@ class QueryParserTest {
         val spec = QueryParser.parse("food", UserPreferences(faith = "hindu"))
         assertEquals("food", spec.category)
         assertTrue(spec.diets.isEmpty())
+        assertTrue(spec.softDiets.isEmpty())
     }
 
     @Test
@@ -61,6 +82,7 @@ class QueryParserTest {
         val spec = QueryParser.parse("museums", UserPreferences(faith = "muslim"))
         assertEquals("attraction", spec.category)
         assertTrue(spec.diets.isEmpty())
+        assertTrue(spec.softDiets.isEmpty())
     }
 
     @Test

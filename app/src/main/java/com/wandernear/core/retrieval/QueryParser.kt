@@ -1,5 +1,6 @@
 package com.wandernear.core.retrieval
 
+import com.wandernear.core.model.Faith
 import com.wandernear.core.model.UserPreferences
 
 /**
@@ -11,7 +12,14 @@ data class SearchSpec(
     val ftsTerms: List<String> = emptyList(),
     val category: String? = null,   // food | worship | attraction | outdoor | shopping | culture | safety
     val religion: String? = null,
+    // A HARD filter: you asked for halal, or ticked it in Preferences, so only places
+    // actually tagged that way are shown.
     val diets: Set<String> = emptySet(),
+    // A SOFT preference: implied by your faith rather than chosen. These places are shown
+    // FIRST but nothing is excluded, because OSM's dietary tags are very sparse — a café
+    // with no `diet:halal` tag simply means nobody has tagged it, NOT that it isn't halal.
+    // Excluding on that basis would hide almost every restaurant on earth.
+    val softDiets: Set<String> = emptySet(),
 )
 
 /**
@@ -135,12 +143,17 @@ object QueryParser {
             category = prefs.interests.singleOrNull()
         }
 
-        // Saved diet preferences also constrain food searches, so a vegetarian
-        // user's plain "food near me" is filtered to vegetarian-friendly places.
-        // `effectiveDiets` falls back to the diet the user's FAITH implies when they
-        // picked none (Muslim ⇒ halal), so "food near me" respects it without them
-        // having to tick the box twice. A diet they chose always wins.
-        val effectiveDiets = if (category == "food") (diets + prefs.effectiveDiets) else emptySet()
+        // A diet you NAMED, or ticked in Preferences, is a hard filter — you meant it.
+        val hardDiets = if (category == "food") (diets + prefs.diets) else emptySet()
+        // A diet merely IMPLIED by your faith is a soft preference: those places sort
+        // first, but nothing is excluded. OSM's `diet:*` tags are sparse, so filtering on
+        // them would tell a Muslim traveller there is no food anywhere — when the truth is
+        // only that nobody has tagged it. See SearchSpec.softDiets.
+        val softDiets = if (category == "food" && hardDiets.isEmpty()) {
+            setOfNotNull(Faith.fromKey(prefs.faith)?.impliedDiet)
+        } else {
+            emptySet()
+        }
 
         // The parallel for faith: a saved faith narrows a worship search to that
         // faith's places, so a Buddhist asking for "religious places" gets Buddhist
@@ -149,6 +162,6 @@ object QueryParser {
         // your saved faith); the preference only fills the gap when you didn't say.
         val effectiveReligion = religion ?: if (category == "worship") prefs.faith.ifBlank { null } else null
 
-        return SearchSpec(terms, category, effectiveReligion, effectiveDiets)
+        return SearchSpec(terms, category, effectiveReligion, hardDiets, softDiets)
     }
 }

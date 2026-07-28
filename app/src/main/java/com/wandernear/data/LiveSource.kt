@@ -139,11 +139,25 @@ object LiveSource {
      */
     private fun matching(all: List<Place>, spec: SearchSpec): List<Place> {
         val base = all.filter { passesFilters(it, spec) }
-        if (spec.ftsTerms.isEmpty()) return base
-        val hit = base.filter { matchesText(it, spec.ftsTerms) }
-        if (hit.isNotEmpty()) return hit
-        val hasFilter = spec.category != null || spec.religion != null || spec.diets.isNotEmpty()
-        return if (hasFilter) base else emptyList()
+        val result = when {
+            spec.ftsTerms.isEmpty() -> base
+            else -> {
+                val hit = base.filter { matchesText(it, spec.ftsTerms) }
+                val hasFilter = spec.category != null || spec.religion != null || spec.diets.isNotEmpty()
+                if (hit.isNotEmpty()) hit else if (hasFilter) base else emptyList()
+            }
+        }
+        return preferSoftDiets(result, spec)
+    }
+
+    /**
+     * Float places matching a SOFT dietary preference (one implied by faith) to the top,
+     * without removing anything. `sortedByDescending` is stable, so within each group the
+     * nearest-first order is preserved.
+     */
+    private fun preferSoftDiets(places: List<Place>, spec: SearchSpec): List<Place> {
+        if (spec.softDiets.isEmpty()) return places
+        return places.sortedByDescending { p -> spec.softDiets.any { it in p.diets } }
     }
 
     /**
@@ -241,6 +255,8 @@ object LiveSource {
             // How the app names where you are, on-device: no reverse-geocode, just the
             // locality OSM already records against this place.
             suburb = tags["addr:suburb"]?.ifBlank { null } ?: tags["addr:city"]?.ifBlank { null },
+            // "Is it open?" — the question travellers ask most, answered on-device.
+            openingHours = tags["opening_hours"]?.ifBlank { null },
             diets = diets,
             distanceKm = haversineKm(origin, LatLng(lat, lng)),
         )
