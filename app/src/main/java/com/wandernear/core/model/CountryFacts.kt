@@ -56,4 +56,28 @@ object CountryFacts {
 
     /** Facts for a country name, or null if we don't have it (never guessed). */
     fun forCountry(country: String?): Facts? = country?.let { byCountry[it] }
+
+    /**
+     * The GSM standard emergency number. Mobile networks are required to route 112 to
+     * local emergency services, and handsets accept it in almost every country — which
+     * makes it the honest answer when we don't know precisely where the user is, and a
+     * far better one than showing nothing at all.
+     *
+     * It is a FALLBACK, not a replacement: where [forCountry] knows the local number
+     * (000, 911, 999…) that one is shown, because it's what locals and signage use.
+     */
+    const val INTERNATIONAL_EMERGENCY = "112"
+
+    /**
+     * An emergency number to show for [country] — the local one when we know it, else
+     * [INTERNATIONAL_EMERGENCY]. Never null: a traveller must always have a number.
+     * [local] is false when we fell back, so the UI can say so rather than imply we
+     * know the country's own number.
+     */
+    fun emergencyFor(country: String?): Emergency =
+        forCountry(country)?.let { Emergency(it.emergency, local = true) }
+            ?: Emergency(INTERNATIONAL_EMERGENCY, local = false)
+
+    /** An emergency number plus whether it's the country's own or the international one. */
+    data class Emergency(val number: String, val local: Boolean)
 }

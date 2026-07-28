@@ -97,6 +97,7 @@ import com.wandernear.core.retrieval.QueryParser
 import com.wandernear.core.retrieval.SearchSpec
 import com.wandernear.ui.theme.categoryTint
 import com.wandernear.data.CityDatabase
+import com.wandernear.data.EmergencyNumbers
 import com.wandernear.data.CityPackBuilder
 import com.wandernear.data.LiveSource
 import com.wandernear.data.LocationProvider
@@ -1513,6 +1514,11 @@ private fun PlaceRow(place: Place, meta: String, snippet: String? = null, action
 @Composable
 private fun HomeHeader(city: CityInfo, locality: String?, onCallEmergency: (String) -> Unit) {
     val facts = CountryFacts.forCountry(city.country)
+    // The emergency number is the one fact that must never be missing, so it's resolved
+    // separately from `facts` (which only covers ~30 countries) and always yields
+    // something — the carrier's own number, the country's, or the international 112.
+    val context = LocalContext.current
+    val emergency = remember(city.country) { EmergencyNumbers.resolve(context, city.country) }
     // The traveller's actual locality (on-device nearest suburb) as the heading when we
     // have it and it differs from the pack city; otherwise the pack city. Null just means
     // "no fix / offline" — we never invent a place name.
@@ -1549,20 +1555,23 @@ private fun HomeHeader(city: CityInfo, locality: String?, onCallEmergency: (Stri
                     modifier = Modifier.padding(start = 30.dp),
                 )
             }
-            if (facts != null || (here == null && city.population != null)) {
-                Spacer(Modifier.height(18.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // Population is the pack CITY's figure, so only show it under the city
-                    // heading — under a suburb it would misread as the suburb's population.
-                    if (here == null) city.population?.let { HeaderPill(Icons.Filled.Groups, "%,d".format(it)) }
-                    facts?.let {
-                        HeaderPill(Icons.Filled.Payments, it.currency)
-                        HeaderPill(Icons.Filled.Call, "Emergency ${it.emergency}", emphasis = true) { onCallEmergency(it.emergency) }
-                    }
-                }
+            // The emergency pill ALWAYS shows, so this row is never empty.
+            Spacer(Modifier.height(18.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Population is the pack CITY's figure, so only show it under the city
+                // heading — under a suburb it would misread as the suburb's population.
+                if (here == null) city.population?.let { HeaderPill(Icons.Filled.Groups, "%,d".format(it)) }
+                // Currency only where we actually know it — never guessed.
+                facts?.let { HeaderPill(Icons.Filled.Payments, it.currency) }
+                // Say "Emergency 000" when it's this country's own number, but
+                // "Emergency 112 (international)" when we fell back — so nobody thinks
+                // we've confirmed the local number when we haven't.
+                val label = if (emergency.isLocal) "Emergency ${emergency.number}"
+                else "Emergency ${emergency.number} (international)"
+                HeaderPill(Icons.Filled.Call, label, emphasis = true) { onCallEmergency(emergency.number) }
             }
         }
     }
