@@ -121,6 +121,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Call
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Celebration
 import androidx.compose.material.icons.filled.Favorite
@@ -913,6 +915,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
+    // Back out of a conversation to the home, instead of the system Back button dropping
+    // you out of the app entirely. Only active while there IS a conversation, so Back
+    // still behaves normally (leaves the app) on the home itself.
+    BackHandler(enabled = messages.isNotEmpty()) { messages.clear() }
+
     // Recovery path when the microphone has been turned off for good.
     if (showMicSettingsDialog) {
         MicPermissionDialog(
@@ -975,6 +982,9 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
                 modifier = Modifier.weight(1f),
             )
         } else {
+            // The conversation replaces the home completely, so without a way back you're
+            // stuck in it. Mirrors the system Back button handled above.
+            ChatHeader(onBack = { messages.clear() })
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -1006,6 +1016,31 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
             voiceState = voiceState,
             onMicToggle = { toggleMic() },
         )
+    }
+}
+
+/**
+ * The one control above a conversation: a way back to the home.
+ *
+ * Deliberately a labelled button, not a bare arrow — it ENDS the conversation and returns
+ * to the home, so it should say so rather than leave you guessing whether your questions
+ * are still there. Anything you wanted to keep is one "Save" tap away on each card.
+ */
+@Composable
+private fun ChatHeader(onBack: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(
+            onClick = onBack,
+            // 48dp: a comfortable, standards-compliant touch target.
+            modifier = Modifier.heightIn(min = 48.dp),
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Back to home")
+        }
     }
 }
 
