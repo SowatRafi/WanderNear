@@ -27,6 +27,15 @@ data class Place(
     val summary: String?,        // short "why it matters" text from Wikipedia
     val phone: String? = null,   // raw OSM phone, e.g. for a police station's Call button
     val website: String? = null, // raw OSM website — e.g. a mosque's page for its Friday times
+    // OSM's own links to a Wikipedia article, if any. Used ONLY to fetch a grounded
+    // "story" (summary) for that place — we never guess which article belongs to a place.
+    val wikipedia: String? = null,  // `wikipedia` tag, e.g. "en:Federation Square"
+    val wikidata: String? = null,   // `wikidata` tag, e.g. "Q1234"
+    // The locality OSM records for this place (`addr:suburb`, else `addr:city`). This is
+    // how the app names where YOU are without asking any service: the nearest fetched
+    // place that has one is your locality. Absent on most places — that's fine, we just
+    // look at the next nearest rather than inventing a name.
+    val suburb: String? = null,
     val diets: Set<String> = emptySet(),  // dietary tags present (value != "no")
     val distanceKm: Double? = null,       // filled in when we rank by distance
 )

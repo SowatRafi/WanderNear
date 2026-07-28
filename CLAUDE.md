@@ -17,10 +17,25 @@ each with a short reason why.
    city's data **live** from the free OSM/Wikipedia APIs over the internet, on
    demand for what the user asks; **downloading a city for offline use is the
    user's optional choice**, not required. Offline is the FALLBACK: a downloaded
-   city works with no signal. **Privacy is unchanged and absolute:** data is
-   fetched by AREA NAME only, "near you" is ranked ON-DEVICE, and the user's raw
-   GPS is NEVER sent anywhere. The AI still runs on-device and only rewords the
+   city works with no signal. The AI still runs on-device and only rewords the
    fetched rows. (Was "offline-first"; the owner reversed the default to live.)
+
+   **LOCATION-FIRST (owner, 2026-07-28) — supersedes the old "by area NAME only"
+   privacy wording.** The user is NEVER asked to type a city. The app takes the
+   phone's own fix and explores the box around it. The owner was explicit: *"it
+   will pull my location, look for the best places to visit"* — and equally that
+   being shown Melbourne, or being told to add a city first, is wrong.
+   What this means for privacy, stated honestly:
+   - A **bounding box centred on the user's fix** (±3 km) IS sent to OpenStreetMap
+     to fetch places. The owner chose this over a coarser snapped grid, knowingly.
+     This is the ONE thing that leaves the phone about where they are.
+   - Everything else stays on-device: ranking by distance, the locality NAME (read
+     from the fetched places' `addr:suburb` — never a reverse-geocode), the country
+     (the SIM's network country), prayer times, and the AI.
+   - **Still forbidden:** reverse-geocoding the user's coordinates, sending a fix to
+     any service other than the OSM place query, and any account/history/telemetry.
+   - The welcome screen must say plainly what is sent. Never claim "your location
+     never leaves the phone" — that is no longer true.
 2. **Free to build and run.** Open-source tools and free data sources only. No
    paid APIs, no servers.
 3. **Native Android, portable core.** Kotlin + Jetpack Compose. Core logic
@@ -89,6 +104,50 @@ never guessed.
 
 ## Milestones
 
+- **LOCATION-FIRST (owner, 2026-07-28)** — the app stopped asking "which city?".
+  The owner's words: *"I told you to make an online and live agent, it will pull my
+  location, look for the best places to visit... Why are you showing me Melbourne
+  every time?"* Until now the explored area came ONLY from a city name typed in
+  Preferences, so whatever was typed once (Melbourne) headlined every screen forever.
+    - `core/model/ActiveArea.hereArea(fix)` builds the explored box straight from the
+      phone's fix (±3 km, longitude span scaled by cos(latitude)). Unit-tested. The
+      whole home and chat already keyed off `activeArea`, so this one substitution
+      made every card location-first without rewriting them.
+    - **Named areas no longer drive the home at all.** There is deliberately NO
+      fallback to a previously-picked city: if we can't get a fix we say so. Falling
+      back is exactly how Melbourne kept reappearing.
+    - **Named on-device, no lookup:** the nearest fetched place carrying `addr:suburb`
+      (new `Place.suburb`) IS your locality — the same rule M6.5 proved for packs.
+      Country/currency/emergency come from the SIM's network country
+      (`LocationProvider.countryName`). Population is dropped rather than guessed.
+    - `LocationProvider.currentFix` uses the platform's own one-shot `getCurrentLocation`
+      (API 30+) so a fresh permission grant doesn't sit with no cached fix.
+    - **Offline matching changed with it:** an around-you box has no OSM id, so
+      `resolveOfflinePack` falls back to `packContaining(fix)` — the downloaded city
+      whose centre is within `AWAY_FROM_CITY_KM`. Never a different city.
+    - **Melbourne is gone from the UI**: "Try the built-in Melbourne sample" and
+      "Add built-in Melbourne (offline sample)" both deleted, and the `MELBOURNE_CBD`
+      fallback origin removed (an empty pack now shows nothing rather than pretending).
+      Preferences → Cities became **"Offline cities"**, framed as "you don't need this
+      day to day" — download only for no-signal travel, and the confirm dialog lost its
+      "Use live" half since live is now the default everywhere.
+    - New honest state: **"OpenStreetMap didn't answer"**, distinct from "You're
+      offline". Found on-device — both Overpass mirrors were down during testing and
+      telling a user on working WiFi that they're offline sends them chasing nothing.
+      `LiveSource` also gained a second retry pass over the mirrors (readTimeout cut
+      90 s → 30 s so the retry stays bounded).
+    - Verified on a Pixel 6: opened straight onto "Good evening / Werribee" with no
+      city typed, live For-you at 590 m / 810 m / 860 m, chat "attractions" reworded by
+      on-device Gemma over real live rows.
+- **Phase 2 — Wikipedia "stories" for live results ✅ (2026-07-28).** `data/Wikipedia.kt`
+  fetches a place's summary ONLY when OSM itself links it (`wikipedia` or `wikidata`
+  tag) — never a guessed article. `LiveSource.enrichStories` enriches just the handful
+  about to be shown, in parallel; the summary reaches the CARDS only, never the AI
+  prompt, so the grounding invariant is untouched. Verified on a Pixel 6: "zoo" in
+  Werribee → Werribee Open Range Zoo with its real Wikipedia sentence, via
+  `wikidata=Q14935316`. **OSM wiki-tag coverage is thin** — 1 of the 6 named
+  attractions in that 3 km box has any link, so "no story" is usually the honest
+  answer, not a broken fetcher.
 - **ARCHITECTURE PIVOT — Live-first (owner, 2026-07-26).** Reversed the default
   from offline-first to **online-first**: the app fetches data LIVE from OSM as
   you ask, and downloading a city is optional (see non-negotiable #1). Grounding

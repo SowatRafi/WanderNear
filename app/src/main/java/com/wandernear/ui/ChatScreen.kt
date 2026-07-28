@@ -51,6 +51,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -68,7 +69,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wandernear.core.model.ActiveArea
+import com.wandernear.core.model.AWAY_FROM_CITY_KM
+import com.wandernear.core.model.HERE_NAME
+import com.wandernear.core.model.hereArea
+import com.wandernear.core.model.haversineKm
 import com.wandernear.core.model.CityEvent
 import com.wandernear.core.model.CityInfo
 import com.wandernear.core.model.Faith
@@ -120,6 +128,8 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Star
@@ -137,9 +147,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// Fallback origin: roughly the centre of Melbourne's CBD, used when we don't
-// have the user's real location (permission declined, or no GPS fix yet).
-private val MELBOURNE_CBD = LatLng(-37.8136, 144.9631)
+// How far you must move before the "around you" box is rebuilt (and the home refetched).
+// Well under the box's own 3 km radius, so the places on screen always surround you, but
+// far enough that a wobbling fix or a walk to the shops doesn't re-hit the network.
+private const val HERE_REBUILD_KM = 1.0
 
 // Example prompts shown on the empty screen to help the user get started.
 // Shown when you've set no preferences yet — a varied starting set.
@@ -266,9 +277,40 @@ private data class ChatMessage(
  */
 private suspend fun resolveOfflinePack(context: Context, area: ActiveArea?, activePack: String): String? =
     withContext(Dispatchers.IO) {
-        if (area != null) CityPackBuilder.packForOsmId(context, area.osmId)
-        else if (CityDatabase.hasAnyCity(context)) activePack else null
+        when {
+            // An area you picked BY NAME (to download before a trip): only the pack
+            // downloaded for that exact area will do, matched by its OSM id.
+            area != null && !area.isAroundYou -> CityPackBuilder.packForOsmId(context, area.osmId)
+            // The box around YOU corresponds to no OSM feature, so match by GEOGRAPHY
+            // instead: the downloaded city you're actually standing in.
+            area != null -> packContaining(context, area.center)
+            else -> if (CityDatabase.hasAnyCity(context)) activePack else null
+        }
     }
+
+/**
+ * The downloaded pack you are actually INSIDE — the installed city whose centre is
+ * nearest your position and within [AWAY_FROM_CITY_KM] — or null if you're not inside
+ * any of them. Deliberately strict: showing another city's cafés because it's the only
+ * thing downloaded would be worse than an honest "you're offline here".
+ *
+ * Opens each pack to read its centre, so call it off the main thread.
+ */
+private fun packContaining(context: Context, fix: LatLng): String? {
+    val packs = buildList {
+        if (CityDatabase.isBundledInstalled(context)) add(CityDatabase.BUNDLED_PACK)
+        CityPackBuilder.packsDir(context).listFiles { f -> f.name.endsWith(".db") }
+            ?.forEach { add("packs/" + it.name) }
+    }
+    return packs
+        .mapNotNull { name ->
+            val center = runCatching { CityDatabase(context, name).cityCenter() }.getOrNull()
+            center?.let { name to haversineKm(fix, it) }
+        }
+        .filter { it.second <= AWAY_FROM_CITY_KM }
+        .minByOrNull { it.second }
+        ?.first
+}
 
 /** Turn retrieved [places] into a chat reply: the AI reword when enabled AND grounded, else the
  *  template. Empty in → the honest refusal, and the AI is never called. Shared by the live and
@@ -304,9 +346,26 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     val prefs by prefsRepo.preferences.collectAsState(initial = UserPreferences())
     // The active city pack — re-open the data whenever it changes (a download or reset).
     val activePack by prefsRepo.activePack.collectAsState(initial = CityDatabase.BUNDLED_PACK)
-    // The live/online area the user is exploring (set by name), or null. When online AND
-    // set, searches fetch live from OSM; otherwise we fall back to a downloaded pack.
-    val activeArea by prefsRepo.activeArea.collectAsState(initial = null)
+    // WHERE ARE WE EXPLORING? Always the box around YOU (see the effect below) — you never
+    // type a city, and there is deliberately NO fallback to some city you picked once: if we
+    // can't work out where you are we say so, because showing another city's cafés under
+    // "around you" would be a lie dressed up as a feature.
+    var aroundYou by remember { mutableStateOf<ActiveArea?>(null) }
+    // The fix the current `aroundYou` box was built from, so we only rebuild it once you've
+    // actually MOVED — otherwise every resume would refetch the whole home.
+    var aroundYouFix by remember { mutableStateOf<LatLng?>(null) }
+    val activeArea = aroundYou
+    // Bumped whenever it's worth re-checking where you are: app resumed, permission granted.
+    var locationEpoch by remember { mutableStateOf(0) }
+    // Do we have location permission? Re-read on every epoch so granting it updates the UI.
+    val hasLocation = remember(locationEpoch) { LocationProvider.hasPermission(context) }
+    // True once we've looked for a fix and come back empty — lets the welcome say "turn on
+    // location" instead of spinning forever.
+    var locationFailed by remember { mutableStateOf(false) }
+    // Have we actually shown the location request yet? The system can't tell us: its
+    // "should show rationale" flag is false both BEFORE the first ask and after a permanent
+    // denial, so we have to remember. Saveable so a rotation doesn't lose the distinction.
+    var askedForLocation by rememberSaveable { mutableStateOf(false) }
     val journalDao = remember { JournalDatabase.get(context).journalDao() }
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var input by remember { mutableStateOf("") }
@@ -314,8 +373,8 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     var pendingQuestion by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    // Bumped when a city is added from THIS screen (the welcome's "Try Melbourne"), where the
-    // active-pack NAME may not change — it forces the load effects below to re-run.
+    // Bumped to force the home's load effects to re-run when nothing they key on has changed
+    // — e.g. "Try again" after the map service was busy, where the area is already correct.
     var cityEpoch by remember { mutableStateOf(0) }
     // Is there a usable city at all? False on a fresh install and after you delete your last
     // city — the screen then shows an "add a city" welcome instead of querying (no pack to open).
@@ -325,6 +384,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
     // Written ONLY by the load effect below (no remember key), so a re-emit of activeArea can't
     // reset it out from under the value the effect just set.
     var offlineArea by remember { mutableStateOf(false) }
+    // True when we WERE online but the live fetch still came back empty-handed — i.e. it's
+    // OpenStreetMap that's unreachable or busy, not you. Worth telling apart: "you're
+    // offline" is a lie when the phone is plainly connected, and it sends the user off to
+    // fix a connection that isn't broken.
+    var liveFetchFailed by remember { mutableStateOf(false) }
     // The active city's facts (name, country, population) for the City Info card.
     var cityInfo by remember(activePack, activeArea) { mutableStateOf<CityInfo?>(null) }
     // Nearest essentials (police/hospital/fuel/parking) for the daily-needs card.
@@ -447,14 +511,21 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val area = activeArea
         val online = LiveSource.isOnline(context)
         val useLive = online && area != null
+        // What to CALL where we are in a sentence: the locality the live fetch worked out,
+        // else the area you picked by name. Null ⇒ we don't know yet, so we don't pretend to.
+        val areaLabel = locality ?: area?.takeIf { !it.isAroundYou }?.shortName
         // Nothing to search: no live area+signal AND no downloaded pack.
         if (!useLive && !hasCity) {
             messages += ChatMessage(
                 Role.Assistant,
-                if (area != null)
-                    "You're offline — reconnect to explore ${area.shortName} live, or download it for offline in Preferences → Cities."
-                else
-                    "Tell me where you are first — set your area in Preferences → Cities, and I'll explore it live.",
+                when {
+                    area != null && areaLabel != null ->
+                        "You're offline — reconnect and I'll explore $areaLabel live, or download it in Preferences → Cities so it works with no signal."
+                    area != null ->
+                        "You're offline — reconnect and I'll find real places around you, or download a city in Preferences → Cities for no-signal travel."
+                    else ->
+                        "I need to know where you are before I can find anything — turn on location and I'll explore what's around you."
+                },
             )
             return
         }
@@ -465,7 +536,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
             val text = when {
                 aiEnabled && !LlmEngine.isLoaded() -> "Warming up the on-device AI (first time, about a minute)…"
                 aiEnabled -> "Thinking…"
-                else -> "Searching ${area?.shortName ?: "nearby"}…"   // live, no AI
+                else -> "Searching ${areaLabel ?: "around you"}…"   // live, no AI
             }
             messages += ChatMessage(Role.Assistant, text, loading = true)
             messages.lastIndex
@@ -483,8 +554,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
                     val here = fixInCity(LocationProvider.lastKnown(context), center)
                     val places = LiveSource.search(area, spec, here ?: center)
                     if (places != null) {
+                        // Add grounded Wikipedia "stories" to the handful we'll show (only the
+                        // wiki-linked ones fetch; the rest pass straight through).
+                        val enriched = LiveSource.enrichStories(places)
                         return@withContext buildRecommendation(
-                            context, question, places, spec, here != null, area.shortName, aiEnabled,
+                            context, question, enriched, spec, here != null, areaLabel, aiEnabled,
                         )
                     }
                     // else: live failed → fall through to the offline pack below.
@@ -494,25 +568,38 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
                 val pack = resolveOfflinePack(context, area, activePack)
                     ?: return@withContext ChatMessage(
                         Role.Assistant,
-                        if (area != null)
-                            "You're offline — reconnect to explore ${area.shortName} live, or download it for offline in Preferences → Cities."
-                        else
-                            Recommender.NO_RESULTS,
+                        when {
+                            // We got here from a FAILED live fetch while online: it's the free
+                            // map service that's busy, not the user's connection.
+                            useLive ->
+                                "OpenStreetMap didn't answer just then — its free servers get busy. Ask me again in a moment, or download this area in Preferences → Cities to stop depending on them."
+                            areaLabel != null ->
+                                "You're offline — reconnect and I'll explore $areaLabel live, or download it in Preferences → Cities so it works with no signal."
+                            area != null ->
+                                "You're offline — reconnect and I'll find real places around you, or download a city in Preferences → Cities for no-signal travel."
+                            else -> Recommender.NO_RESULTS
+                        },
                     )
                 val pdb = CityDatabase(context, pack)
                 val center = pdb.cityCenter()
                 val here = fixInCity(LocationProvider.lastKnown(context), center)
-                val places = pdb.search(spec, here ?: center ?: MELBOURNE_CBD)
+                // No fix AND no centre means the pack holds no places at all — refuse
+                // honestly rather than ranking from some other city's coordinates.
+                val origin = here ?: center
+                    ?: return@withContext ChatMessage(Role.Assistant, Recommender.NO_RESULTS)
+                val places = pdb.search(spec, origin)
                 buildRecommendation(context, question, places, spec, here != null, pdb.cityInfo()?.name, aiEnabled)
             }
             if (placeholderIndex != null) messages[placeholderIndex] = answer else messages += answer
         }
     }
 
-    // Asks for location once; whatever the user chooses, we run the pending search.
+    // Asks for location once; whatever the user chooses, we run the pending search. The
+    // epoch bump also lets the home work out where you are the moment you allow it.
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { _ ->
+        locationEpoch++
         pendingQuestion?.let { runSearch(it); pendingQuestion = null }
     }
 
@@ -552,24 +639,58 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         }
     }
 
-    // Add the built-in Melbourne sample from the welcome — an instant, offline first city.
-    // installBundled is a quick (<1s) asset copy and is atomic + idempotent, so a double-tap
-    // is safe. cityEpoch++ nudges the load effects since the active-pack name may not change.
-    fun tryMelbourne() {
-        scope.launch {
-            withContext(Dispatchers.IO) { CityDatabase.installBundled(context) }
-            prefsRepo.setActivePack(CityDatabase.BUNDLED_PACK)
-            cityEpoch++
+    // WHERE AM I? The heart of the app: take a fix and make the box around it the area we
+    // explore. Nothing is typed and no service is asked where you are — the box is pure
+    // arithmetic on your own coordinates, and what it's CALLED is worked out below from the
+    // OSM data that comes back.
+    LaunchedEffect(locationEpoch) {
+        val fix = withContext(Dispatchers.IO) { LocationProvider.currentFix(context) }
+        if (fix == null) {
+            locationFailed = true
+            return@LaunchedEffect
         }
+        locationFailed = false
+        // Only rebuild the area once you've genuinely moved — a new box means a new fetch,
+        // and a fix wobbling by a few metres must not refetch the whole home.
+        val previous = aroundYouFix
+        if (previous != null && aroundYou != null && haversineKm(previous, fix) < HERE_REBUILD_KM) return@LaunchedEffect
+        aroundYouFix = fix
+        aroundYou = hereArea(fix, country = withContext(Dispatchers.IO) { LocationProvider.countryName(context) })
     }
+
+    // Come back to the app after travelling and the home re-checks where you are. The
+    // moved-check above means standing still costs nothing.
+    // ponytail: re-detects on resume, not continuously — Travel Mode is the feature that
+    // already watches you while you move; wire this to its fixes if that's ever wanted.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) locationEpoch++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Asking for location from the welcome screen. Granting it immediately re-runs the
+    // effect above, so the home fills in without any further tap.
+    val homeLocationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { locationEpoch++ }
 
     // Load the home's facts + centre + cards. LIVE (online + an area set) fetches them
     // fresh from OSM in ONE call and derives every card; otherwise the downloaded-pack
     // path fills them. Reloads when the area/pack changes, or the interests/faith that
     // decide what the single live fetch needs to include.
     LaunchedEffect(activePack, cityEpoch, activeArea, prefs.interests, prefs.faith) {
-        val area = activeArea
-        val live = area != null && withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
+        // No idea where you are yet ⇒ nothing to show. We deliberately do NOT open whatever
+        // pack happens to be installed: "around you" has to mean around YOU.
+        val area = activeArea ?: run {
+            hasCity = false; offlineArea = false; liveFetchFailed = false
+            liveHome = null; cityInfo = null; cityCenter = null; locality = null
+            essentials = emptyList(); notable = emptyList(); festivals = emptyList()
+            return@LaunchedEffect
+        }
+        val live = withContext(Dispatchers.IO) { LiveSource.isOnline(context) }
         if (live) {
             val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
             val origin = fixInCity(fix, area.center) ?: area.center
@@ -580,34 +701,48 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
             if (home != null) {
                 hasCity = true
                 offlineArea = false
+                liveFetchFailed = false
                 cityCenter = area.center
-                // The hero + City Info come straight from the area — no fetch needed.
-                cityInfo = CityInfo(area.displayName, area.country, area.population)
                 festivals = emptyList()   // festivals need a Wikipedia call — deferred for live
-                locality = null           // suburb needs a pack; the hero shows the area name
+                // WHAT IS THIS PLACE CALLED? Worked out ON-DEVICE from the data we just
+                // fetched: `home` is ranked nearest-first, so the first place carrying a
+                // locality is the one you're standing next to. No reverse-geocode and no
+                // name lookup — and when nothing carries one we say nothing rather than
+                // invent a name for where you are.
+                val named = if (area.isAroundYou) home.firstNotNullOfOrNull { it.suburb } else null
+                locality = named
+                cityInfo = if (area.isAroundYou) CityInfo(named ?: HERE_NAME, area.country, null)
+                else CityInfo(area.displayName, area.country, area.population)
                 liveHome = home
                 // `home` is already ranked nearest-first, so firstOrNull of a category = nearest.
                 essentials = ESSENTIAL_CATEGORIES.mapNotNull { c -> home.firstOrNull { it.category == c } }
                 notable = home.filter { it.category == "attraction" }.take(NOTABLE_SHOWN)
+                // Enrich the worth-visiting attractions with grounded Wikipedia stories — set in
+                // place, so the card shows the names immediately and the "why" fills in a moment later.
+                notable = withContext(Dispatchers.IO) { LiveSource.enrichStories(notable) }
                 return@LaunchedEffect
             }
-            // else: live fetch failed → fall through to the offline path below.
+            // else: live fetch failed → fall through to the offline path below. Remember that
+            // we WERE online, so the empty state can say "OpenStreetMap didn't answer" rather
+            // than sending the user to fix a connection that's working fine.
+            liveFetchFailed = true
         }
-        // --- Not live (offline, live fetch failed, or no area set): read a DOWNLOADED pack ---
+        // --- Not live (no connection, or the fetch failed): read a DOWNLOADED pack ---
         liveHome = null
-        // The pack backing THIS area (by osm id), or the active pack when no area is set.
+        // The downloaded city you're actually standing in, if you have one.
         val offlinePack = resolveOfflinePack(context, area, activePack)
         if (offlinePack == null) {
-            // Nothing downloaded for this view. With an area set it's an OFFLINE state for that
-            // area (connect or download it) — never a different city; else the "add a city" welcome.
+            // You're not inside any downloaded city, so there is honestly nothing to show —
+            // never another city's data dressed up as "around you".
             hasCity = false
-            offlineArea = (area != null)
+            offlineArea = true
             cityCenter = null; cityInfo = null; festivals = emptyList()
             essentials = emptyList(); notable = emptyList(); locality = null
             return@LaunchedEffect
         }
         hasCity = true
         offlineArea = false
+        liveFetchFailed = false
         val pdb = CityDatabase(context, offlinePack)
         val center = withContext(Dispatchers.IO) { pdb.cityCenter() }
         cityCenter = center
@@ -616,7 +751,11 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         // Read location off the main thread (binder IPC). A stale fix is fine for
         // ranking; the "you are here" label below uses a FRESH fix only.
         val fix = withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }
-        val origin = fixInCity(fix, center) ?: center ?: MELBOURNE_CBD
+        // An empty pack has no centre — show nothing rather than rank from a made-up origin.
+        val origin = fixInCity(fix, center) ?: center ?: run {
+            essentials = emptyList(); notable = emptyList(); locality = null
+            return@LaunchedEffect
+        }
         essentials = withContext(Dispatchers.IO) { pdb.nearestEssentials(origin, ESSENTIAL_CATEGORIES) }
         notable = withContext(Dispatchers.IO) { pdb.nearbyNotable(origin, NEARBY_RADIUS_KM) }
         // Which suburb am I in? Derived ON-DEVICE from the pack (no GPS ever leaves the
@@ -665,10 +804,14 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val home = liveHome
         if (home != null) {
             // Diet filters food only.
-            forYou = home
+            val picks = home
                 .filter { it.category in prefs.interests }
                 .filter { it.category != "food" || prefs.diets.isEmpty() || prefs.diets.any { d -> d in it.diets } }
                 .take(5)
+            forYou = picks
+            // Enrich with grounded Wikipedia stories (only the wiki-linked ones fetch), in place —
+            // the card shows names immediately and the "why" fills in a moment later.
+            forYou = withContext(Dispatchers.IO) { LiveSource.enrichStories(picks) }
             return@LaunchedEffect
         }
         // Pack path — the pack backing this area, or the active pack.
@@ -677,7 +820,7 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
         val pdb = CityDatabase(context, offlinePack)
         val center = withContext(Dispatchers.IO) { pdb.cityCenter() }
         val origin = fixInCity(withContext(Dispatchers.IO) { LocationProvider.lastKnown(context) }, center)
-            ?: center ?: MELBOURNE_CBD
+            ?: center ?: run { forYou = emptyList(); return@LaunchedEffect }
         forYou = withContext(Dispatchers.IO) { pdb.forYou(origin, prefs.interests.toList(), prefs.diets) }
     }
 
@@ -696,13 +839,33 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
 
     Column(Modifier.fillMaxSize().imePadding()) {
         if (messages.isEmpty() && !hasCity) {
-            // Fresh install, or you deleted your last city — a warm welcome, not a broken home.
-            // If a live area is already set, it says "explore [area]" and points to the chat.
+            // Nothing to show yet — almost always because we don't know where you are.
+            // `shouldShowRequestPermissionRationale` is false BOTH before the first ask and
+            // after a permanent denial, so `askedForLocation` is what tells the two apart.
+            val activity = context.findActivity()
+            val canAskAgain = activity == null || ActivityCompat.shouldShowRequestPermissionRationale(
+                activity, Manifest.permission.ACCESS_FINE_LOCATION,
+            )
             NoCityState(
-                areaName = activeArea?.shortName,
-                offline = offlineArea,
+                state = when {
+                    // "Connected but the map service didn't answer" first — telling someone
+                    // with working WiFi that they're offline just sends them chasing nothing.
+                    offlineArea && liveFetchFailed -> Welcome.ServerBusy
+                    offlineArea -> Welcome.Offline
+                    !hasLocation && askedForLocation && !canAskAgain -> Welcome.Blocked
+                    !hasLocation -> Welcome.NeedsLocation
+                    locationFailed -> Welcome.NoFix
+                    else -> Welcome.Locating
+                },
+                onEnableLocation = {
+                    askedForLocation = true
+                    homeLocationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                },
+                // Retry has to nudge BOTH: the fix (for "can't find you") and the home's own
+                // load (for "the map service didn't answer", where the area is already known).
+                onRetry = { locationFailed = false; locationEpoch++; cityEpoch++ },
+                onOpenSettings = { openAppSettings(context) },
                 onAddCity = onAddCity,
-                onTryMelbourne = ::tryMelbourne,
                 modifier = Modifier.weight(1f),
             )
         } else if (messages.isEmpty()) {
@@ -763,18 +926,41 @@ fun ChatScreen(prefsRepo: PreferencesRepository, onAddCity: () -> Unit = {}) {
 }
 
 /**
- * Shown when there's no home to show. Three cases: a fresh install (online-first, nothing
- * bundled) → the first-run welcome; a live [areaName] set + online → "ready to explore
- * [area]"; or [offline] with an area you haven't downloaded → a "you're offline, connect or
- * download" state for THAT area (never a different city). [onAddCity] opens Preferences →
- * Cities; [onTryMelbourne] adds the built-in sample offline.
+ * Why the home has nothing to show yet. The app is location-first, so all but one of
+ * these are about knowing where you are — there is no "pick a city" gate any more.
+ */
+private enum class Welcome {
+    /** We have permission and are waiting for a fix. */
+    Locating,
+
+    /** We've never been allowed to look, or the user can still be asked again. */
+    NeedsLocation,
+
+    /** Permission denied for good — the system won't show the dialog again. */
+    Blocked,
+
+    /** Allowed, but no fix arrived (location services off, or indoors with no signal). */
+    NoFix,
+
+    /** No connection AND nothing downloaded that covers where you are. */
+    Offline,
+
+    /** Connected, but OpenStreetMap didn't answer — its free servers are often busy. */
+    ServerBusy,
+}
+
+/**
+ * The first thing you see before the home can fill in. One primary action per state, and
+ * downloading a city is always the quiet secondary — it's for travelling without signal,
+ * never a prerequisite for using the app.
  */
 @Composable
 private fun NoCityState(
-    areaName: String?,
-    offline: Boolean,
+    state: Welcome,
+    onEnableLocation: () -> Unit,
+    onRetry: () -> Unit,
+    onOpenSettings: () -> Unit,
     onAddCity: () -> Unit,
-    onTryMelbourne: () -> Unit,
     modifier: Modifier,
 ) {
     Column(
@@ -783,19 +969,37 @@ private fun NoCityState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        // Warm hero mark — a globe in a tinted circle, echoing the home hero's language.
+        // Warm hero mark. While we're locating it holds a spinner instead of an icon, so
+        // the wait reads as progress rather than a screen that failed to load.
         Box(
             Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Filled.Public, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(46.dp))
+            if (state == Welcome.Locating) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(38.dp),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    strokeWidth = 3.dp,
+                )
+            } else {
+                Icon(
+                    if (state == Welcome.Offline || state == Welcome.ServerBusy) Icons.Filled.Public
+                    else Icons.Filled.MyLocation,
+                    null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(46.dp),
+                )
+            }
         }
         Spacer(Modifier.height(22.dp))
         Text(
-            when {
-                offline -> "You're offline"
-                areaName != null -> "Explore $areaName"
-                else -> "Add a city to begin"
+            when (state) {
+                Welcome.Locating -> "Finding what's around you…"
+                Welcome.NeedsLocation -> "See what's around you"
+                Welcome.Blocked -> "Location is turned off"
+                Welcome.NoFix -> "Can't find you yet"
+                Welcome.Offline -> "You're offline"
+                Welcome.ServerBusy -> "OpenStreetMap didn't answer"
             },
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
@@ -803,50 +1007,70 @@ private fun NoCityState(
         )
         Spacer(Modifier.height(10.dp))
         Text(
-            when {
-                offline && areaName != null ->
-                    "Reconnect to explore $areaName live, or download it for offline (Preferences → " +
-                        "Cities) so it works with no signal at all."
-                offline ->
-                    "Reconnect to the internet, or download a city for offline in Preferences → Cities."
-                areaName != null ->
-                    "Ask me anything in the box below — I'll find real places live and rank them near " +
-                        "you. No signal? Download $areaName for offline in Preferences → Cities."
-                else ->
-                    "WanderNear is your on-device local guide. Add a city once while you're online — " +
-                        "then it works fully offline, anywhere."
+            when (state) {
+                Welcome.Locating ->
+                    "Working out where you are, then finding real places nearby."
+                Welcome.NeedsLocation ->
+                    "WanderNear is a local guide for wherever you happen to be. Allow location and " +
+                        "it finds real places around you — food, worship, landmarks — matched to your taste."
+                Welcome.Blocked ->
+                    "WanderNear needs location to know where \"around you\" is. You can turn it back " +
+                        "on for this app in Settings."
+                Welcome.NoFix ->
+                    "Location is allowed, but no position has come through — check location is switched " +
+                        "on in your phone's settings, or step somewhere with a clearer signal."
+                Welcome.Offline ->
+                    "Reconnect and I'll find real places around you. Travelling without signal? " +
+                        "Download a city first and it all works offline."
+                Welcome.ServerBusy ->
+                    "Your connection is fine — the free map service is just busy right now. Give it " +
+                        "a moment and try again. Downloading a city avoids the wait for good."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(28.dp))
-        // ONE primary action: go to Preferences → Cities to set/change/download a city.
-        Button(
-            onClick = onAddCity,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-        ) {
-            Icon(Icons.Filled.Add, null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                when {
-                    offline -> "Go to Cities"
-                    areaName != null -> "Change area"
-                    else -> "Add a city"
+        // ONE primary action per state. "Locating" gets none — there's nothing to do but wait.
+        if (state != Welcome.Locating) {
+            Spacer(Modifier.height(28.dp))
+            Button(
+                onClick = when (state) {
+                    Welcome.NeedsLocation -> onEnableLocation
+                    Welcome.Blocked -> onOpenSettings
+                    else -> onRetry
                 },
-            )
-        }
-        // Subordinate: an instant offline sample, only worth offering on the online first-run.
-        if (areaName == null && !offline) {
-            Spacer(Modifier.height(6.dp))
-            TextButton(onClick = onTryMelbourne) {
-                Text("Try the built-in Melbourne sample")
+                // 52dp: comfortably above the 48dp minimum touch target.
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+            ) {
+                Icon(
+                    when (state) {
+                        Welcome.NeedsLocation -> Icons.Filled.MyLocation
+                        Welcome.Blocked -> Icons.Filled.Settings
+                        else -> Icons.Filled.Refresh
+                    },
+                    null,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    when (state) {
+                        Welcome.NeedsLocation -> "Turn on location"
+                        Welcome.Blocked -> "Open Settings"
+                        else -> "Try again"
+                    },
+                )
             }
         }
+        // Always subordinate: downloading a city is for no-signal travel, never a gate.
+        Spacer(Modifier.height(6.dp))
+        TextButton(onClick = onAddCity) {
+            Text("Download a city for offline")
+        }
         Spacer(Modifier.height(18.dp))
-        // Reinforce the core promise wherever we ask for an area.
+        // Say plainly what does and doesn't leave the phone — no vague reassurance.
         Text(
-            "Only the city name is sent when you add one — never your location.",
+            "To find places, only a small area around you is sent to OpenStreetMap. No account, " +
+                "no history, and the AI runs on your phone.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -1118,7 +1342,7 @@ private fun NotableCard(
             val sub = place.subcategory?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }
             val dist = distanceLabel(place.distanceKm)?.let { "$it away" }
             val meta = listOfNotNull(sub, dist).joinToString(" · ")
-            PlaceRow(place, meta) {
+            PlaceRow(place, meta, snippet = place.summary) {
                 DirectionsButton { onDirections(place) }
                 SaveButton { onSave(place) }
             }
@@ -1131,7 +1355,7 @@ private fun NotableCard(
  * and its actions. The badge is what turns a wall of text into something you can scan.
  */
 @Composable
-private fun PlaceRow(place: Place, meta: String, actions: @Composable () -> Unit) {
+private fun PlaceRow(place: Place, meta: String, snippet: String? = null, actions: @Composable () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         CategoryBadge(place.category, place.religion)
         Spacer(Modifier.width(12.dp))
@@ -1140,6 +1364,18 @@ private fun PlaceRow(place: Place, meta: String, actions: @Composable () -> Unit
             if (meta.isNotBlank()) {
                 Spacer(Modifier.height(1.dp))
                 Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // A grounded one-liner from Wikipedia — the "why it's worth a visit". Two lines
+            // max keeps the home glanceable; the full story is in the chat / Travel Mode.
+            snippet?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Spacer(Modifier.height(8.dp))
             ActionRow(content = actions)

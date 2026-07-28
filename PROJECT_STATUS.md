@@ -12,10 +12,23 @@ attractions, outdoor spots) with a short reason why. It also has a private
 **Travel Journal**. Everything runs on the phone; nothing leaves it; it works in
 airplane mode. Free/open tools and data only.
 
-**Non-negotiables:** **online-first & private** (offline is the fallback — see the
-pivot below) · free to build/run · native Android with an Android-free portable
-`core/` · one generic pipeline for ANY city · **never hallucinate** (every
-recommendation grounded in a real retrieved row — live OSM or a downloaded pack).
+**Non-negotiables:** **online-first, location-first & private** (offline is the
+fallback — see the pivots below) · free to build/run · native Android with an
+Android-free portable `core/` · one generic pipeline for ANY city · **never
+hallucinate** (every recommendation grounded in a real retrieved row — live OSM or
+a downloaded pack).
+
+> **📍 LOCATION-FIRST (owner, 2026-07-28).** The app NEVER asks which city you're in.
+> It takes the phone's fix, explores the ±3 km box around it, and names that place
+> on-device from the fetched OSM data. There is no fallback to a previously-picked
+> city — that is exactly why Melbourne used to headline every screen. Melbourne is
+> gone from the UI entirely; Preferences → Cities is now **"Offline cities"**, purely
+> for no-signal travel. **Privacy, stated honestly:** a bounding box centred on your
+> fix IS sent to OpenStreetMap to fetch places (the owner chose this over a coarser
+> grid). Nothing else leaves — ranking, the locality name, the country (SIM network
+> country), prayer times and the AI are all on-device, and reverse-geocoding the
+> user's coordinates remains forbidden. Do NOT write "your location never leaves the
+> phone" anywhere in the app; it isn't true any more.
 
 > **🔄 ARCHITECTURE PIVOT — live-first (owner, 2026-07-26).** The default flipped
 > from offline-first to **online-first**: the app fetches data LIVE from free OSM
@@ -161,7 +174,21 @@ adb shell am start -n com.wandernear/.MainActivity
 - **Run one shell** (PowerShell) for builds; don't mix with Git Bash `./gradlew`.
 - Pixel 6 (Tensor G1, 2021): first LLM load ~50 s, then ~8–18 tok/s. Voice model is small — best for short, clear phrases.
 - **Bundled-pack "copy-once" — FIXED in M6.5.** The pack used to be copied assets→`filesDir` only when absent, so a rebuilt `melbourne.db` never reached an existing install (and after M6.5 added a `suburb` column, an old pack would have *crashed* the home screen). `CityDatabase` now writes a `melbourne.db.version` marker and re-installs the pack whenever `BUNDLED_PACK_VERSION` differs. ⚠️ **Bump `CityDatabase.BUNDLED_PACK_VERSION` every time you rebuild the bundled pack**, or the new one won't ship to existing installs. (`nearestSuburb` also degrades to null on an older pack instead of throwing.) Manual override if ever needed: `adb shell run-as com.wandernear rm -f files/melbourne.db` then relaunch — unlike `pm clear`, this does NOT wipe the side-loaded 2.6 GB LLM in `files/models/`.
-- 🔒 **PRIVACY RULE (learned the hard way).** NEVER send the user's GPS off the device. "Which suburb am I in" is derived ON-DEVICE from the pack's `place.suburb` (`CityDatabase.nearestSuburb`). An earlier attempt reverse-geocoded the user's exact coordinates via Nominatim — an adversarial review caught it as a direct violation of non-negotiable #1 before it shipped. Sending a user-typed *city name* to geocode a pack is fine; sending their *position* is not.
+- **"You're offline" is often a LIE.** Overpass's free mirrors go down or return 504
+  regularly — during the location-first work BOTH mirrors failed even a trivial
+  `node(1)` probe from a PC. A failed fetch on a phone with working WiFi must say
+  **"OpenStreetMap didn't answer"**, not "you're offline", or the user goes off
+  fixing a connection that isn't broken. `LiveSource` now does two passes over the
+  mirrors (readTimeout 30 s, so the retry stays bounded).
+- **Overpass rate-limits per IP — your PC and the test phone share one.** Probing
+  Overpass from the desktop while testing on-device makes the app look broken. Stop
+  querying from the PC while verifying on the phone.
+- **`adb shell input tap` uses DEVICE pixels, not the coordinates you read off a
+  displayed screenshot.** The Pixel 6 is 1080x2400 but screenshots are shown scaled
+  (e.g. 900x2000) — multiply by the ratio, or every tap lands somewhere else.
+- 🔒 **PRIVACY RULE (updated 2026-07-28 by the location-first decision).** A bbox
+  around the user's fix now DOES go to OpenStreetMap — that is the one deliberate
+  exception, chosen by the owner. Everything below still holds for everything else: "Which suburb am I in" is derived ON-DEVICE from the pack's `place.suburb` (`CityDatabase.nearestSuburb`). An earlier attempt reverse-geocoded the user's exact coordinates via Nominatim — an adversarial review caught it as a direct violation of non-negotiable #1 before it shipped. Sending a user-typed *city name* to geocode a pack is fine; sending their *position* is not.
 - **Kotlin block comments NEST.** A `/*` inside a KDoc — e.g. writing a path like `pipeline/` + `*.py` — opens a nested comment and swallows the rest of the file ("Unclosed comment" at EOF). Avoid `/*` inside comment text.
 - **Wikipedia's extract API caps at 20 extracts PER REQUEST** even when the generator lists more members — the response carries a `continue.excontinue` token for the rest. A one-shot `generator=categorymembers&prop=extracts` silently drops everything past the 20th (alphabetically), so a >20-festival city loses its tail. Both `fetch_festivals.py` and `CityPackBuilder.insertFestivals` follow the token. Any future "list a Wikipedia category with extracts" code must do the same.
 - **Wikidata is the WRONG source for city festivals.** Its festival items are reachable only by coordinates or `P131` "located in", and the big ones (Melbourne Comedy Festival Q17012417) have neither — a structured query returns a handful, one defunct, missing the majors. Wikipedia's `Category:Festivals in <City>` returns them all. And Wikidata has NO usable recurring-festival dates (`P837` empty; only one-off past editions carry dates). Use Wikipedia categories, store no date.

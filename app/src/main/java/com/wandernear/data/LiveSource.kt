@@ -11,6 +11,10 @@ import com.wandernear.core.pack.OsmClassifier
 import com.wandernear.core.retrieval.SearchSpec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -39,6 +43,12 @@ object LiveSource {
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
     )
+
+    // How many full passes over the mirrors before giving up, and the pause between them.
+    // Two passes is the sweet spot: it rides out the common "server is momentarily busy"
+    // 504 without leaving someone staring at a spinner when the service is really down.
+    private const val OVERPASS_ATTEMPTS = 2
+    private const val OVERPASS_RETRY_DELAY_MS = 1_500L
 
     /**
      * A quick HINT of whether we're online — used only to decide whether to TRY live first.
@@ -112,6 +122,24 @@ object LiveSource {
         withContext(Dispatchers.IO) { fetchPlaces(area, categories, origin) }
 
     /**
+     * Fetch grounded Wikipedia "stories" for the wiki-linked places in [places] — in
+     * PARALLEL, so a handful cost about one round-trip — returning copies with `summary`
+     * set. A place with no OSM Wikipedia link (or one that already has a summary) passes
+     * through unchanged. Call this on the FEW places you're about to show, never a whole
+     * fetch. Grounded: only OSM-linked places get a story; nothing is invented.
+     */
+    suspend fun enrichStories(places: List<Place>): List<Place> = withContext(Dispatchers.IO) {
+        coroutineScope {
+            places.map { p ->
+                async {
+                    if (p.summary != null || (p.wikipedia == null && p.wikidata == null)) p
+                    else Wikipedia.summaryFor(p.wikipedia, p.wikidata)?.let { p.copy(summary = it.text) } ?: p
+                }
+            }.awaitAll()
+        }
+    }
+
+    /**
      * Shared fetch + parse + distance-rank. [categories] null/empty ⇒ everything. Returns null
      * when the request FAILED (no connectivity / server error) — distinct from an empty list,
      * which means the request succeeded but the area genuinely has none of those places. The
@@ -154,9 +182,14 @@ object LiveSource {
             address = OsmClassifier.address(tags),
             cuisine = tags["cuisine"],
             religion = tags["religion"],
-            summary = null,   // live results carry no Wikipedia summary yet (that's L2/enrichment)
+            summary = null,   // filled in later, only for wiki-linked places — see enrichStories
             phone = tags["phone"] ?: tags["contact:phone"],
             website = tags["website"] ?: tags["contact:website"],
+            wikipedia = tags["wikipedia"],   // carried so we can fetch a grounded "story" later
+            wikidata = tags["wikidata"],
+            // How the app names where you are, on-device: no reverse-geocode, just the
+            // locality OSM already records against this place.
+            suburb = tags["addr:suburb"]?.ifBlank { null } ?: tags["addr:city"]?.ifBlank { null },
             diets = diets,
             distanceKm = haversineKm(origin, LatLng(lat, lng)),
         )
@@ -190,11 +223,22 @@ object LiveSource {
     }
 
     /**
-     * POST the query to Overpass, trying each mirror once. A live query is small, so we
-     * keep latency low: no long backoff — if a mirror is busy we just try the next, and
-     * a total failure returns null (the caller shows a friendly "couldn't reach" reply).
+     * POST the query to Overpass. Tries every mirror, then — because these are free,
+     * heavily shared servers that routinely answer "too busy" — waits briefly and tries
+     * them all once more. Two quick rounds turn most transient 504s into a normal result
+     * without making a genuine outage feel like a hang. A total failure returns null, and
+     * the caller says honestly that the map service didn't answer.
      */
     private suspend fun overpassPost(body: String): String? {
+        for (attempt in 0 until OVERPASS_ATTEMPTS) {
+            if (attempt > 0) delay(OVERPASS_RETRY_DELAY_MS)   // cancellation-aware pause
+            overpassRound(body)?.let { return it }
+        }
+        return null
+    }
+
+    /** One pass over every mirror; the first that answers 200 wins. */
+    private fun overpassRound(body: String): String? {
         for (endpoint in OVERPASS_ENDPOINTS) {
             var conn: HttpURLConnection? = null
             try {
@@ -203,7 +247,10 @@ object LiveSource {
                     // A tighter connect timeout so a dead network (e.g. a stale VPN tunnel) falls
                     // back to the offline pack quickly instead of hanging the home for 20 s.
                     connectTimeout = 10_000
-                    readTimeout = 90_000
+                    // A few square km of map is a small query — if a mirror hasn't answered in
+                    // 30 s it's struggling, and moving on beats waiting. This also bounds the
+                    // retry above: worst case is 2 mirrors x 2 rounds, not six minutes.
+                    readTimeout = 30_000
                     doOutput = true
                     setRequestProperty("User-Agent", USER_AGENT)
                     setRequestProperty("Content-Type", "application/x-www-form-urlencoded")

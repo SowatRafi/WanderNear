@@ -79,8 +79,6 @@ fun CitiesSection(repo: PreferencesRepository) {
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val activePack by repo.activePack.collectAsState(initial = CityDatabase.BUNDLED_PACK)
-    // The area being explored LIVE (online), if any — shown so the user knows what's set.
-    val activeArea by repo.activeArea.collectAsState(initial = null)
 
     // The packs on this phone. Reloaded whenever the active one changes — which
     // covers a finished download too, since that switches the active pack.
@@ -123,18 +121,6 @@ fun CitiesSection(repo: PreferencesRepository) {
         }
     }
 
-    /** Set the confirmed area as active for LIVE exploring — no download needed. Only the
-     *  area's name/bbox is stored; the places are fetched live from OSM when you ask. */
-    fun useLive(match: CityPackBuilder.Match) {
-        scope.launch {
-            repo.setActiveArea(match.toActiveArea())
-            matches = emptyList()
-            query = ""
-            message = "${match.shortLabel} is set — exploring live. Ask away on the Explore tab."
-            isError = false
-        }
-    }
-
     /** Download + build the confirmed city, then make it the active one. */
     fun startBuild(match: CityPackBuilder.Match) {
         progress = 0f
@@ -143,8 +129,8 @@ fun CitiesSection(repo: PreferencesRepository) {
             try {
                 when (val result = CityPackBuilder.build(context, match) { progress = it }) {
                     is CityPackBuilder.Result.Success -> {
-                        // Set BOTH: the area (so you explore it live online) AND its pack (so the
-                        // SAME area works offline — the home/chat find this pack by its osm id).
+                        // Remember BOTH the area and its pack, so that if you lose signal inside
+                        // this city the app knows which downloaded pack covers where you are.
                         repo.setActiveArea(match.toActiveArea())
                         repo.setActivePack("packs/" + result.file.name)
                         matches = emptyList()
@@ -168,26 +154,19 @@ fun CitiesSection(repo: PreferencesRepository) {
     }
 
     WnCard {
-            SectionHeader(Icons.Filled.Public, "Cities")
+            SectionHeader(Icons.Filled.Public, "Offline cities")
             Spacer(Modifier.height(6.dp))
             Text(
-                "Add a city and explore it live over the internet — or download it to also use " +
-                    "with no signal. Only the city name is ever sent; never your location.",
+                "You don't need any of this day to day — WanderNear finds places around you live. " +
+                    "Download a city only if you'll be somewhere without signal; it then works with " +
+                    "no connection at all. Only the city name you type is ever sent.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            activeArea?.let {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Exploring live: ${it.shortName}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
 
-            // --- 1. The cities already on this phone -----------------------------
+            // --- 1. The cities already downloaded to this phone ------------------
             Spacer(Modifier.height(16.dp))
-            Text("Your cities", style = MaterialTheme.typography.labelLarge)
+            Text("Downloaded", style = MaterialTheme.typography.labelLarge)
             // selectableGroup + role = RadioButton tells a screen reader this is one
             // "pick exactly one" list, and reads out which is selected.
             Column(Modifier.selectableGroup()) {
@@ -219,23 +198,19 @@ fun CitiesSection(repo: PreferencesRepository) {
                 }
             }
 
-            // When the built-in Melbourne sample isn't installed, offer to add it — copied
-            // straight from the app (no download, works offline), with its richer Wikipedia
-            // data. Checked directly (not via the list) so it still shows at zero cities.
-            if (!CityDatabase.isBundledInstalled(context)) {
-                TextButton(onClick = {
-                    scope.launch {
-                        withContext(Dispatchers.IO) { CityDatabase.installBundled(context) }
-                        installed = withContext(Dispatchers.IO) { installedPacks(context) }
-                        message = "Built-in Melbourne added."
-                        isError = false
-                    }
-                }) { Text("Add built-in Melbourne (offline sample)") }
+            // Nothing downloaded is the NORMAL state — say so, rather than leaving a blank gap
+            // that reads like something failed to load.
+            if (installed.isEmpty()) {
+                Text(
+                    "Nothing downloaded — you're exploring live.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
-            // --- 2. Add a city ---------------------------------------------------
+            // --- 2. Download a city for offline ----------------------------------
             Spacer(Modifier.height(16.dp))
-            Text("Add a city", style = MaterialTheme.typography.labelLarge)
+            Text("Download a city", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = query,
@@ -314,25 +289,21 @@ fun CitiesSection(repo: PreferencesRepository) {
             }
     }
 
-    // Explore live (default) or download for offline — the confirmed area either way.
+    // Confirm the exact area before downloading — the full OSM name makes "Paris, France"
+    // versus "Paris, Texas" unmistakable, so we never quietly fetch the wrong place.
     confirming?.let { match ->
         AlertDialog(
             onDismissRequest = { confirming = null },
-            title = { Text("Explore ${match.shortLabel}?") },
+            title = { Text("Download ${match.shortLabel}?") },
             text = {
                 Text(
                     "${match.label}\n\n" +
-                        "Use it live: places load from the internet as you ask and rank near you on " +
-                        "your phone — nothing to wait for. Only the area name is sent, never your location.\n\n" +
-                        "Or download it once (a few MB) to also explore with no signal at all.",
+                        "Saves this city's places to your phone (a few MB) so it works with no " +
+                        "signal at all. You don't need this to explore while you're online.",
                 )
             },
             confirmButton = {
-                // Two paths, live first (the default); download is the optional offline extra.
-                Row {
-                    TextButton(onClick = { confirming = null; useLive(match) }) { Text("Use live") }
-                    TextButton(onClick = { confirming = null; startBuild(match) }) { Text("Download") }
-                }
+                TextButton(onClick = { confirming = null; startBuild(match) }) { Text("Download") }
             },
             dismissButton = {
                 TextButton(onClick = { confirming = null }) { Text("Cancel") }
@@ -349,8 +320,11 @@ fun CitiesSection(repo: PreferencesRepository) {
             text = {
                 Text(
                     if (isBundled)
-                        "Melbourne is the built-in sample — it has the richest data (Wikipedia stories " +
-                            "and festivals). Removing it frees space; you can add it back any time, offline."
+                        "Melbourne is a leftover sample that shipped with the app. Removing it frees " +
+                            "space and changes nothing about exploring live."
+                    // ponytail: the bundled Melbourne asset (5 MB) now has no way back once
+                    // deleted, since nothing advertises it any more. Drop the asset and its
+                    // install/restore code the next time this file is touched.
                     else
                         "Its offline data will be removed from this phone. You can download it again any time.",
                 )
